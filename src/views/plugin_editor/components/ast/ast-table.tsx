@@ -6,7 +6,8 @@ import {
     TableRow,
     TableBody,
     TableCell,
-    Button
+    Button,
+    Checkbox
 } from '~/shadcn';
 import { RotateCcw, Trash2 } from 'lucide-react';
 import {
@@ -26,6 +27,11 @@ interface Props {
     onRowClick: (id: number) => void;
     onDelete: (id: number) => void;
     onReset: (id: number) => void;
+    selectedIds?: Set<number>;
+    onToggleRowSelect?: (id: number, checked: boolean) => void;
+    isAllSelected?: boolean;
+    isIndeterminate?: boolean;
+    onToggleSelectAll?: (checked: boolean) => void;
 }
 
 // 颜色样式缓存，避免每次渲染重复计算哈希
@@ -86,6 +92,35 @@ const TargetCell = React.memo(({
     return prev.id === next.id && prev.target === next.target && prev.source === next.source;
 });
 
+// 行内选择框（独立 memo 组件，避免点击触发行点击事件）
+const RowCheckbox = React.memo(({
+    id,
+    checked,
+    onToggle,
+}: {
+    id: number,
+    checked: boolean,
+    onToggle: (id: number, checked: boolean) => void,
+}) => {
+    const handleChange = useCallback((c: boolean) => {
+        onToggle(id, c);
+    }, [id, onToggle]);
+
+    const handleClick = useCallback((e: React.MouseEvent) => {
+        e.stopPropagation();
+    }, []);
+
+    return (
+        <div className="flex items-center justify-center" onClick={handleClick}>
+            <Checkbox
+                checked={checked}
+                onCheckedChange={handleChange}
+                aria-label="select row"
+            />
+        </div>
+    );
+});
+
 // 行级 memo 组件（带 forwardRef，供虚拟滚动测量高度）
 interface MemoizedAstRowProps {
     row: any;
@@ -94,6 +129,8 @@ interface MemoizedAstRowProps {
     getCellClass: (columnId: string) => string;
     dataIndex: number;
     errorType?: 'error' | 'unused' | 'security' | null;
+    isChecked?: boolean;
+    onToggleRowSelect?: (id: number, checked: boolean) => void;
 }
 
 const errorRowStyles: Record<string, string> = {
@@ -103,7 +140,7 @@ const errorRowStyles: Record<string, string> = {
 };
 
 const MemoizedAstRowInner = React.forwardRef<HTMLTableRowElement, MemoizedAstRowProps>(
-    ({ row, isSelected, onRowClick, getCellClass, dataIndex, errorType }, ref) => {
+    ({ row, isSelected, onRowClick, getCellClass, dataIndex, errorType, isChecked, onToggleRowSelect }, ref) => {
         const handleClick = useCallback(() => {
             onRowClick(row.original.id);
         }, [row.original.id, onRowClick]);
@@ -136,10 +173,37 @@ MemoizedAstRowInner.displayName = 'MemoizedAstRow';
 const MemoizedAstRow = React.memo(MemoizedAstRowInner, (prev, next) => {
     return prev.isSelected === next.isSelected
         && prev.row.original === next.row.original
-        && prev.errorType === next.errorType;
+        && prev.errorType === next.errorType
+        && prev.isChecked === next.isChecked
+        && prev.onToggleRowSelect === next.onToggleRowSelect;
 });
 
-export const ASTTable = React.forwardRef<HTMLDivElement, Props>(({ data, editingId, onRowClick, onDelete, onReset }, ref) => {
+// 表头全选复选框
+const HeaderCheckbox = React.memo(({
+    checked,
+    indeterminate,
+    onToggle,
+}: {
+    checked: boolean,
+    indeterminate: boolean,
+    onToggle: (checked: boolean) => void,
+}) => {
+    const handleClick = useCallback((e: React.MouseEvent) => {
+        e.stopPropagation();
+    }, []);
+
+    return (
+        <div className="flex items-center justify-center" onClick={handleClick}>
+            <Checkbox
+                checked={indeterminate ? 'indeterminate' : checked}
+                onCheckedChange={(c) => onToggle(!!c)}
+                aria-label="select all"
+            />
+        </div>
+    );
+});
+
+export const ASTTable = React.forwardRef<HTMLDivElement, Props>(({ data, editingId, onRowClick, onDelete, onReset, selectedIds, onToggleRowSelect, isAllSelected, isIndeterminate, onToggleSelectAll }, ref) => {
     const { t } = useTranslation();
     const updateAstItem = useRegexStore.use.updateAstItem();
     const parentRef = useRef<HTMLDivElement>(null);
@@ -166,8 +230,34 @@ export const ASTTable = React.forwardRef<HTMLDivElement, Props>(({ data, editing
         return () => window.removeEventListener('i18n-diagnose-errors', handleErrors as EventListener);
     }, []);
 
-    const columns = useMemo<ColumnDef<AstItem>[]>(
-        () => [
+    // 是否启用选择模式
+    const selectionEnabled = !!onToggleRowSelect && selectedIds !== undefined;
+
+    const columns = useMemo<ColumnDef<AstItem>[]>(() => {
+        const cols: ColumnDef<AstItem>[] = [];
+
+        // 选择列（仅在启用选择模式时显示）
+        if (selectionEnabled) {
+            cols.push({
+                id: "select",
+                header: () => (
+                    <HeaderCheckbox
+                        checked={!!isAllSelected}
+                        indeterminate={!!isIndeterminate}
+                        onToggle={onToggleSelectAll || (() => {})}
+                    />
+                ),
+                cell: ({ row }) => (
+                    <RowCheckbox
+                        id={row.original.id}
+                        checked={selectedIds?.has(row.original.id) || false}
+                        onToggle={onToggleRowSelect!}
+                    />
+                ),
+            });
+        }
+
+        cols.push(
             {
                 accessorKey: "type",
                 header: ({ column }) => <div className="text-center">{t('Editor.Table.ColumnType')}</div>,
@@ -255,9 +345,10 @@ export const ASTTable = React.forwardRef<HTMLDivElement, Props>(({ data, editing
                     );
                 },
             },
-        ],
-        [onDelete, onReset, updateAstItem, onRowClick]
-    );
+        );
+
+        return cols;
+    }, [onDelete, onReset, updateAstItem, onRowClick, selectionEnabled, isAllSelected, isIndeterminate, onToggleSelectAll, onToggleRowSelect, selectedIds, t]);
 
     const table = useReactTable({
         data,
@@ -287,6 +378,9 @@ export const ASTTable = React.forwardRef<HTMLDivElement, Props>(({ data, editing
 
     // Helper to determine cell classes（稳定引用）
     const getCellClass = useCallback((columnId: string) => {
+        if (columnId === 'select') {
+            return "w-[1%] whitespace-nowrap p-2";
+        }
         if (columnId === 'type' || columnId === 'name') {
             return "w-[1%] whitespace-nowrap p-2";
         }
@@ -352,6 +446,8 @@ export const ASTTable = React.forwardRef<HTMLDivElement, Props>(({ data, editing
                                     onRowClick={onRowClick}
                                     getCellClass={getCellClass}
                                     errorType={errorMap.get(row.original.id) || null}
+                                    isChecked={selectedIds?.has(row.original.id) || false}
+                                    onToggleRowSelect={onToggleRowSelect}
                                 />
                             );
                         })}

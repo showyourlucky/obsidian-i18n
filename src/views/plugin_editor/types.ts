@@ -55,6 +55,10 @@ export interface AstSlice {
     updateAstItems: (items: { id: number; updates: Partial<AstItem> }[]) => void;
     /** 删除所有未翻译的AST项 */
     deleteUntranslatedAstItems: () => void;
+    /** 批量删除指定ID集合的AST项 */
+    deleteAstItemsByIds: (ids: number[]) => void;
+    /** 批量还原指定ID集合的AST项（译文重置为原文） */
+    resetAstItemsByIds: (ids: number[]) => void;
 }
 
 export interface RegexSlice {

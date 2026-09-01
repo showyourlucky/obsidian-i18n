@@ -50,7 +50,11 @@ export default {
         VariableCheck: "变量校验",
         PunctuationCheck: "标点检查",
         ExpectedConsumption: "预期消耗",
-        LineNumber: "行 {{line}}"
+        LineNumber: "行 {{line}}",
+        SelectedCount: "已选 {{count}} 项"
+    },
+    Filters: {
+        NameAll: "全部名称"
     },
     Actions: {
         BatchTranslate: "开始批量翻译 ({{count}})",
@@ -76,7 +80,10 @@ export default {
         AiFix: "AI 修复",
         AiFixTip: "让 AI 尝试修复此译文的语法错误",
         ContextAware: "上下文感知",
-        ContextAwareTip: "附加源码上下文以提升翻译准确度"
+        ContextAwareTip: "附加源码上下文以提升翻译准确度",
+        BatchDelete: "批量删除",
+        BatchRestore: "批量还原",
+        ClearSelection: "取消选择"
     },
     Stats: {
         Title: "条目统计",
@@ -146,6 +153,7 @@ export default {
         SuccessIncrementalExtract: "增量提取完成",
         DiagnosisSuccess: "语法诊断通过",
         ConfirmDeleteUnused: "确定删除这些冗余项吗？该操作不可撤销。",
+        ConfirmBatchDelete: "确认删除选中的 {{count}} 项吗？该操作不可撤销。",
         AiFixSuccess: "AI 修复成功"
     },
     Errors: {

@@ -44,4 +44,20 @@ export const createAstSlice: StateCreator<RegexStore, [], [], AstSlice> = (set) 
     deleteUntranslatedAstItems: () => set((state) => ({
         astItems: state.astItems.filter(item => item.target && item.target !== item.source && item.target.trim() !== '')
     })),
+
+    deleteAstItemsByIds: (ids: number[]) => set((state) => {
+        const idSet = new Set(ids);
+        const remaining = state.astItems.filter(item => !idSet.has(item.id));
+        // 重新分配 ID 保证连续性
+        return { astItems: remaining.map((item, index) => ({ ...item, id: index })) };
+    }),
+
+    resetAstItemsByIds: (ids: number[]) => set((state) => {
+        const idSet = new Set(ids);
+        return {
+            astItems: state.astItems.map(item =>
+                idSet.has(item.id) ? { ...item, target: item.source } : item
+            ),
+        };
+    }),
 });
