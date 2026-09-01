@@ -32,6 +32,11 @@ export interface RegexExtractionResult {
 // ------------------------------
 // 核心类（优化：预编译、缓存、配置化）
 // ------------------------------
+/** 转义正则元字符，使字符串可作为字面量参与 RegExp 构造 */
+function escapeRegExp(text: string): string {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 export class RegexTranslator {
     private settings: I18nSettings;
     // [变量] 正则表达式模式 (预编译)
@@ -233,12 +238,18 @@ export class RegexTranslator {
         return translations;
     }
 
+    /**
+     * 应用正则翻译项
+     *
+     * BUG-001 关联缺陷: 原实现为纯文本全局替换 (split/join)，不校验引号边界。
+     * 当 source 不含引号时 (如 default)，会连同 .default 属性访问、标识符中的 default
+     * 一并替换，直接产出语法错误。此处按 source 的引号特征分流处理。
+     */
     public translate(code: string, translations: PluginTranslationV1Regex[]): string {
         let translatedCode = code;
         for (const item of translations) {
-            if (item.source && item.target && item.source !== item.target) {
-                translatedCode = translatedCode.split(item.source).join(item.target);
-            }
+            if (!item.source || !item.target || item.source === item.target) continue;
+            translatedCode = this.replaceLiteral(translatedCode, item.source, item.target);
         }
         return translatedCode;
     }
@@ -247,16 +258,55 @@ export class RegexTranslator {
      * 跟踪正则项的使用情况
      * @param code 源代码
      * @param translations 翻译项
-     * @returns 被命中的翻译项 source 集合
+     * @returns 被命中的翻译项 source 集合 (口径与 translate() 保持一致)
      */
     public traceUsage(code: string, translations: PluginTranslationV1Regex[]): Set<string> {
         const hitSources = new Set<string>();
         for (const item of translations) {
-            if (item.source && code.includes(item.source)) {
+            if (item.source && this.hasMatch(code, item.source)) {
                 hitSources.add(item.source);
             }
         }
         return hitSources;
+    }
+
+    /**
+     * 安全地执行一次字面量替换
+     * - source 是带配对引号的字符串字面量 (如 "Cancel")：整体替换，并保证译文带同样的引号
+     * - source 内部含引号 (如 Notice("Cancel"))：匹配体已自带边界，按字面量整体替换
+     * - source 不含引号 (如 default)：仅替换目标代码中被引号完整包裹的片段，
+     *   避免破坏 .default / defaultValue 等属性访问与标识符
+     */
+    private replaceLiteral(code: string, source: string, target: string): string {
+        const wrap = this.getQuoteWrap(source);
+
+        if (wrap) {
+            const safeTarget = this.getQuoteWrap(target) ? target : `${wrap.quote}${target}${wrap.quote}`;
+            return code.split(source).join(safeTarget);
+        }
+
+        if (/["'`]/.test(source)) {
+            return code.split(source).join(target);
+        }
+
+        const innerTarget = this.getQuoteWrap(target)?.inner ?? target;
+        const quoted = new RegExp(`(["'\`])${escapeRegExp(source)}\\1`, 'g');
+        return code.replace(quoted, (_match, quote: string) => `${quote}${innerTarget}${quote}`);
+    }
+
+    /** 判断 source 在目标代码中是否真的存在可替换点 (与 replaceLiteral 口径一致) */
+    private hasMatch(code: string, source: string): boolean {
+        if (this.getQuoteWrap(source) || /["'`]/.test(source)) return code.includes(source);
+        return new RegExp(`(["'\`])${escapeRegExp(source)}\\1`).test(code);
+    }
+
+    /** 解析文本外层的配对引号 (如 "Cancel" → { quote: '"', inner: 'Cancel' })，无则解析失败返回 null */
+    private getQuoteWrap(text: string): { quote: string, inner: string } | null {
+        if (!text || text.length < 2) return null;
+        const quote = text[0];
+        if (quote !== '"' && quote !== "'" && quote !== '`') return null;
+        if (text[text.length - 1] !== quote) return null;
+        return { quote, inner: text.slice(1, -1) };
     }
 
     /**

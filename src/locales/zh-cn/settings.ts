@@ -135,6 +135,10 @@ export default {
         ValidReTitle: "保留规则",
         ValidReDesc: "只有匹配到的文本才会被提取，其余全部忽略。",
         ValidPlaceholder: "一行一条保留正则",
+        // ── 翻译安全 ──
+        SafetyHeader: "翻译安全",
+        StrictTitle: "严格匹配模式",
+        StrictDesc: "开启后仅按「类型:名称:原文」指纹替换，禁用仅按原文的宽松回退。宽松回退已内置上下文校验（不替换参与比较、分支、对象键及 default 等硬编码依赖词的字符串），但严格模式更保守，代价是部分译文可能失效。",
         // ── 提示词 ──
         PromptHeader: "翻译提示",
         PromptTitle: "翻译 Prompt",

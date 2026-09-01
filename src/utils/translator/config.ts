@@ -60,7 +60,34 @@ export const AST_DEFAULT_RULES = {
 };
 
 // ============================================================================
-// 2. Regex 提取相关配置
+// 2. 翻译安全策略 (上下文校验)
+// ============================================================================
+
+/**
+ * 参与逻辑判断的字符串方法
+ * 出现在这些方法实参位置的字符串属于「程序逻辑」而非 UI 文案，翻译后会导致判断/比较/分支失效
+ */
+export const LOGIC_STRING_METHODS = new Set([
+    'startsWith', 'endsWith', 'includes', 'indexOf', 'lastIndexOf',
+    'match', 'test', 'search', 'localeCompare', 'replace', 'split'
+]);
+
+/**
+ * 翻译后会破坏语言机制 / 模块互操作的硬编码依赖词
+ * 例如 esbuild 的 __toESM 辅助函数使用 Object.defineProperty(n, "default", {...})，
+ * 一旦把 "default" 翻译掉，React 等 CJS 模块的 default 导出即失效 (BUG-001)
+ */
+export const HARDCODED_WORDS = new Set([
+    'default', 'value', 'string', 'module', 'exports', 'require',
+    'client', 'strict', 'production', 'development', 'constructor',
+    'prototype', 'toString', 'valueOf'
+]);
+
+/** 判定为「程序逻辑」的二元运算符 (比较 + 成员判定) */
+export const LOGIC_BINARY_OPERATORS = new Set(['===', '!==', '==', '!=', 'in', 'instanceof']);
+
+// ============================================================================
+// 3. Regex 提取相关配置
 // ============================================================================
 
 export const REGEX_DEFAULT_CONFIG = {

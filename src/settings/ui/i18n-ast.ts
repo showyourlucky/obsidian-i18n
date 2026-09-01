@@ -97,6 +97,24 @@ export default class I18nAST extends BaseSetting {
             });
 
         // ==============================
+        // 翻译安全策略
+        // ==============================
+        new Setting(containerEl)
+            .setName(t('Settings.Ast.SafetyHeader'))
+            .setHeading();
+
+        new Setting(containerEl)
+            .setName(t('Settings.Ast.StrictTitle'))
+            .setDesc(t('Settings.Ast.StrictDesc'))
+            .addToggle(toggle => {
+                toggle.setValue(!!this.settings.astStrictMatch)
+                    .onChange(async (value) => {
+                        this.settings.astStrictMatch = value;
+                        await this.i18n.saveSettings();
+                    });
+            });
+
+        // ==============================
         // 翻译提示词配置
         // ==============================
         new Setting(containerEl)

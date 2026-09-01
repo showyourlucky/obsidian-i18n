@@ -14,7 +14,10 @@ import { I18nSettings } from '../../settings/data';
  * 严格白名单配置
  * 只有在以下上下文中出现的字符串才会被考虑提取
  */
-import { AST_DEFAULT_CONFIG, AST_DEFAULT_RULES } from './config';
+import {
+    AST_DEFAULT_CONFIG, AST_DEFAULT_RULES,
+    HARDCODED_WORDS, LOGIC_BINARY_OPERATORS, LOGIC_STRING_METHODS
+} from './config';
 
 export class AstTranslator {
     private settings: I18nSettings;
@@ -80,13 +83,28 @@ export class AstTranslator {
     }
 
     /**
-     * 翻译逻辑 (宽松匹配)
-     * 支持严格匹配 (type:name:source) 和宽松匹配 (source only)
+     * 解析宽松匹配 (fallback) 的启用状态
+     * 严格模式开启时完全禁用宽松回退，只认 type:name:source 指纹
      */
-    public translate(ast: t.Node, translations: PluginTranslationV1Ast[]): string {
+    private isLooseMatchEnabled(options?: { strict?: boolean }): boolean {
+        if (typeof options?.strict === 'boolean') return !options.strict;
+        return !this.settings?.astStrictMatch;
+    }
+
+    /**
+     * 翻译逻辑 (宽松匹配 + 上下文安全校验)
+     * 支持严格匹配 (type:name:source) 和宽松匹配 (source only)
+     *
+     * BUG-001: 宽松匹配会丢弃 AST 上下文，把全代码所有同文本字面量一并替换。
+     * 因此回退必须满足两个前提:
+     *   1. 未开启严格模式
+     *   2. 该字符串字面量不参与程序逻辑 (比较 / 分支 / 对象键 / 硬编码依赖词)
+     */
+    public translate(ast: t.Node, translations: PluginTranslationV1Ast[], options: { strict?: boolean } = {}): string {
         // 1. 构建查找表
         const strictMap = new Map<string, string>(); // type:name:source -> target
         const looseMap = new Map<string, string>();  // source -> target (fallback)
+        const allowLoose = this.isLooseMatchEnabled(options);
 
         translations.forEach(item => {
             if (item.type && item.name) {
@@ -96,13 +114,14 @@ export class AstTranslator {
         });
 
         // 2. 遍历所有字符串节点 (不限于白名单，以支持手动添加的条目)
-        this.traverseAllStrings(ast, (type, name, valueNode) => {
+        this.traverseAllStrings(ast, (type, name, valueNode, safe) => {
             const source = this.extractSource(valueNode);
             if (!source) return;
 
             // 尝试匹配
             let target = strictMap.get(this.getFingerprint({ type, name, source } as any));
-            if (!target) {
+            // 严格匹配失败时，仅当该字符串不参与程序逻辑才允许回退
+            if (!target && allowLoose && safe) {
                 target = looseMap.get(source);
             }
 
@@ -122,13 +141,15 @@ export class AstTranslator {
     /**
      * 跟踪翻译项的使用情况
      * 模拟翻译过程，记录哪些翻译项在源码中找到了匹配点
+     * 口径必须与 translate() 完全一致，否则冗余诊断会误报
      */
-    public traceUsage(ast: t.Node, translations: PluginTranslationV1Ast[]): Set<string> {
+    public traceUsage(ast: t.Node, translations: PluginTranslationV1Ast[], options: { strict?: boolean } = {}): Set<string> {
         const hitFingerprints = new Set<string>();
 
         // 1. 构建查找表
         const strictMap = new Map<string, string>(); // fingerprint -> target
         const looseMap = new Map<string, string>();  // source -> target
+        const allowLoose = this.isLooseMatchEnabled(options);
 
         translations.forEach(item => {
             if (item.type && item.name) {
@@ -138,14 +159,14 @@ export class AstTranslator {
         });
 
         // 2. 遍历所有匹配项
-        this.traverseAllStrings(ast, (type, name, valueNode) => {
+        this.traverseAllStrings(ast, (type, name, valueNode, safe) => {
             const source = this.extractSource(valueNode);
             if (!source) return;
 
             const fingerprint = this.getFingerprint({ type, name, source } as any);
             if (strictMap.has(fingerprint)) {
                 hitFingerprints.add(fingerprint);
-            } else if (looseMap.has(source)) {
+            } else if (allowLoose && safe && looseMap.has(source)) {
                 // 如果严格匹配失败但宽松匹配成功，记录下宽松匹配的标示
                 hitFingerprints.add(source);
             }
@@ -375,49 +396,107 @@ export class AstTranslator {
     /**
      * 全字符串遍历器 (用于翻译)
      * 遍历所有字符串节点，不受白名单限制
+     *
+     * 回调的第四个参数 `safe` 表示该字符串是否「不参与程序逻辑」。
+     * 只有 safe 为 true 时才允许使用宽松匹配 (仅按 source 文本) 回退。
      */
-    private traverseAllStrings(ast: t.Node, callback: (type: string, name: string, valueNode: t.StringLiteral | t.TemplateLiteral) => void) {
+    private traverseAllStrings(
+        ast: t.Node,
+        callback: (type: string, name: string, valueNode: t.StringLiteral | t.TemplateLiteral, safe: boolean) => void
+    ) {
+        /** 上报一个字符串节点，并同步计算其上下文安全性 */
+        const report = (
+            strPath: any,
+            type: string,
+            name: string,
+            valueNode: t.StringLiteral | t.TemplateLiteral
+        ) => {
+            callback(type, name, valueNode, !this.isLogicString(strPath));
+        };
+
         traverse(ast, {
             VariableDeclarator: (path) => {
                 const node = path.node;
                 const name = t.isIdentifier(node.id) ? node.id.name : 'var';
                 if (this.isStrNode(node.init)) {
-                    callback('VariableDeclarator', name, node.init);
+                    report(path.get('init'), 'VariableDeclarator', name, node.init);
                 }
             },
             AssignmentExpression: (path) => {
                 const node = path.node;
                 const name = this.getAssignName(node.left) || 'assign';
                 if (this.isStrNode(node.right)) {
-                    callback('AssignmentExpression', name, node.right);
+                    report(path.get('right'), 'AssignmentExpression', name, node.right);
                 }
             },
             ObjectProperty: (path) => {
                 const node = path.node;
                 const name = this.getObjKeyName(node.key) || 'prop';
                 if (this.isStrNode(node.value)) {
-                    callback('ObjectProperty', name, node.value);
+                    report(path.get('value'), 'ObjectProperty', name, node.value);
                 }
             },
             CallExpression: (path) => {
                 const node = path.node;
                 const name = this.getCallName(node.callee) || 'func';
-                node.arguments.forEach(arg => {
+                const argPaths = path.get('arguments') as any[];
+                node.arguments.forEach((arg, index) => {
                     if (this.isStrNode(arg)) {
-                        callback('CallExpression', name, arg);
+                        report(argPaths[index], 'CallExpression', name, arg);
                     }
                 });
             },
             NewExpression: (path) => {
                 const node = path.node;
                 const name = this.getCallName(node.callee) || 'new';
-                node.arguments.forEach(arg => {
+                const argPaths = path.get('arguments') as any[];
+                node.arguments.forEach((arg, index) => {
                     if (this.isStrNode(arg)) {
-                        callback('NewExpression', name, arg);
+                        report(argPaths[index], 'NewExpression', name, arg);
                     }
                 });
             }
         });
+    }
+
+    /**
+     * 判断字符串节点是否参与程序逻辑 (不可翻译)
+     * 参与逻辑的字符串翻译后会导致判断/比较/分支失效
+     *
+     * @param path 字符串字面量自身的 NodePath
+     */
+    private isLogicString(path: any): boolean {
+        if (!path || !path.parentPath) return false;
+
+        const node = path.node;
+        const parent = path.parentPath.node;
+        if (!node || !parent) return false;
+
+        // 1. 字符串方法调用: x.startsWith("abc") / x.includes("abc")
+        if (t.isCallExpression(parent) && Array.isArray(parent.arguments) && parent.arguments.includes(node)) {
+            const callee = parent.callee;
+            let methodName: string | null = null;
+            if (t.isIdentifier(callee)) methodName = callee.name;
+            else if (t.isMemberExpression(callee) && t.isIdentifier(callee.property)) {
+                methodName = callee.property.name;
+            }
+            if (methodName && LOGIC_STRING_METHODS.has(methodName)) return true;
+        }
+
+        // 2. 二元比较 / 成员判定: x === "abc" / "abc" === x / "abc" in obj
+        if (t.isBinaryExpression(parent) && LOGIC_BINARY_OPERATORS.has(parent.operator)) return true;
+
+        // 3. switch case 分支值
+        if (t.isSwitchCase(parent) && parent.test === node) return true;
+
+        // 4. 对象键 (计算属性除外)
+        if (t.isObjectProperty(parent) && parent.key === node && !parent.computed) return true;
+
+        // 5. 硬编码依赖词 (模块互操作 / 语言关键字)
+        const raw = this.extractSource(node);
+        if (raw && HARDCODED_WORDS.has(raw)) return true;
+
+        return false;
     }
 
     // ====================================================================================================
