@@ -30,6 +30,9 @@ export const useThemeTranslation = () => {
     const [concurrencyError, setConcurrencyError] = useState(false);
     const [timeout, setTimeoutVal] = useState(i18n.settings.llmTimeout?.toString() || '60000');
     const [timeoutError, setTimeoutError] = useState(false);
+    // 限制本次翻译的批次数，0/空 表示不限制，只翻译前 N 批
+    const [maxBatches, setMaxBatches] = useState('');
+    const [maxBatchesError, setMaxBatchesError] = useState(false);
 
     const [currentBatch, setCurrentBatch] = useState(0);
     const [totalBatches, setTotalBatches] = useState(0);
@@ -140,6 +143,17 @@ export const useThemeTranslation = () => {
         }
     }
 
+    const handleMaxBatchesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const val = e.target.value;
+        setMaxBatches(val);
+        if (val.trim() === '') {
+            setMaxBatchesError(false);
+            return;
+        }
+        const n = parseInt(val, 10);
+        setMaxBatchesError(isNaN(n) || n < 0);
+    };
+
     const handleStop = () => {
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
@@ -170,6 +184,8 @@ export const useThemeTranslation = () => {
 
         try {
             const op = createTranslationProvider();
+            const parsedMaxBatches = parseInt(maxBatches, 10);
+            const limit = (!isNaN(parsedMaxBatches) && parsedMaxBatches > 0) ? parsedMaxBatches : undefined;
             await op.themeTranslate(
                 targetItems,
                 async (batchResult: ThemeTranslationItem[], batchIndex: number, totalBatchesVal: number) => {
@@ -189,7 +205,8 @@ export const useThemeTranslation = () => {
                     }));
                     updateItems(updates);
                 },
-                abortControllerRef.current.signal
+                abortControllerRef.current.signal,
+                limit
             );
 
             toast.success(t('Common.Notices.BatchTranslateSuccess'));
@@ -216,6 +233,8 @@ export const useThemeTranslation = () => {
             batchSize,
             concurrencyLimit,
             overwrite: storeOverwrite,
+            maxBatches,
+            maxBatchesError,
             inputError,
             concurrencyError,
             isTranslating,
@@ -238,6 +257,7 @@ export const useThemeTranslation = () => {
             setBatchSize: handleBatchSizeChange,
             setConcurrencyLimit: handleConcurrencyLimitChange,
             setOverwrite: (overwrite: boolean) => setTranslationStatus({ overwrite }),
+            setMaxBatches: handleMaxBatchesChange,
             handleTimeoutChange,
             handleBatchSizeBlur,
             handleConcurrencyLimitBlur,

@@ -2,7 +2,7 @@ import { Button, Input, Select, SelectContent, SelectItem, SelectTrigger, Select
 import { STYLES } from '@/src/constants/llm-options';
 import { SUPPORTED_LANGUAGES } from '@/src/constants/languages';
 import { TemplateCard } from '../../plugin_editor/components/common/template-card';
-import { Square, Clock, Languages, Sparkles, Layers, Palette, Coins } from 'lucide-react';
+import { Square, Clock, Languages, Sparkles, Layers, Palette, Coins, Hash } from 'lucide-react';
 import { useThemeTranslation } from './use-theme-translation';
 import { useTranslation } from 'react-i18next';
 
@@ -29,7 +29,9 @@ const ThemeLLMCard: React.FC<Props> = ({ controller }) => {
         totalBatches,
         targetItems,
         timeout,
-        timeoutError
+        timeoutError,
+        maxBatches,
+        maxBatchesError
     } = state;
 
     const {
@@ -38,6 +40,7 @@ const ThemeLLMCard: React.FC<Props> = ({ controller }) => {
         setBatchSize,
         setConcurrencyLimit,
         setOverwrite,
+        setMaxBatches,
         handleBatchSizeBlur,
         handleConcurrencyLimitBlur,
         handleTimeoutChange,
@@ -173,6 +176,22 @@ const ThemeLLMCard: React.FC<Props> = ({ controller }) => {
                     </div>
                 </div>
 
+                {/* Max Batches (translation count limit) */}
+                <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                        <Hash className="w-3.5 h-3.5" />
+                        {t('Editor.Labels.MaxBatches')}
+                    </label>
+                    <Input
+                        type="number"
+                        min={0}
+                        value={maxBatches}
+                        onChange={setMaxBatches}
+                        placeholder={t('Editor.Labels.MaxBatchesTip')}
+                        className={`h-8 text-xs bg-background ${maxBatchesError ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
+                    />
+                </div>
+
                 {/* Token Estimation */}
                 {!isTranslating && targetItems.length > 0 && (
                     <div className="flex items-center justify-between p-2 rounded-md bg-muted/30 border border-border/50 animate-in fade-in slide-in-from-top-1 duration-300">
@@ -219,7 +238,7 @@ const ThemeLLMCard: React.FC<Props> = ({ controller }) => {
                         variant="default"
                         size="sm"
                         onClick={handleBatchTranslation}
-                        disabled={targetItems.length === 0 || inputError}
+                        disabled={targetItems.length === 0 || inputError || maxBatchesError}
                         className="text-xs h-8 gap-1.5 font-medium w-full transition-all duration-200 hover:opacity-90 active:scale-[0.98]"
                     >
                         <Sparkles className="w-3.5 h-3.5" />

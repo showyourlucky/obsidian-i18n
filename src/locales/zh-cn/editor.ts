@@ -40,6 +40,8 @@ export default {
         Checksum: "校验",
         BatchSize: "每批数量",
         Concurrency: "并发限制",
+        MaxBatches: "翻译次数",
+        MaxBatchesTip: "本次最多翻译的批次数，留空表示全部翻译",
         Timeout: "超时 (ms)",
         Overwrite: "覆盖现有译文",
         ClickToJump: "点击跳转到该行",

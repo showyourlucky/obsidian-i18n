@@ -19,6 +19,9 @@ export const useAstTranslation = () => {
     const [batchSize, setBatchSize] = useState(i18n.settings.llmBatchSize?.toString() || '20');
     const [concurrencyLimit, setConcurrencyLimit] = useState(i18n.settings.llmConcurrencyLimit?.toString() || '3');
     const [overwrite, setOverwrite] = useState(false);
+    // 限制本次翻译的批次数，0/空 表示不限制，只翻译前 N 批
+    const [maxBatches, setMaxBatches] = useState('');
+    const [maxBatchesError, setMaxBatchesError] = useState(false);
 
     const [inputError, setInputError] = useState(false);
     const [concurrencyError, setConcurrencyError] = useState(false);
@@ -141,6 +144,17 @@ export const useAstTranslation = () => {
         }
     }
 
+    const handleMaxBatchesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const val = e.target.value;
+        setMaxBatches(val);
+        if (val.trim() === '') {
+            setMaxBatchesError(false);
+            return;
+        }
+        const n = parseInt(val, 10);
+        setMaxBatchesError(isNaN(n) || n < 0);
+    };
+
 
     const handleStop = () => {
         if (abortControllerRef.current) {
@@ -172,6 +186,8 @@ export const useAstTranslation = () => {
 
 
             const op = createTranslationProvider();
+            const parsedMaxBatches = parseInt(maxBatches, 10);
+            const limit = (!isNaN(parsedMaxBatches) && parsedMaxBatches > 0) ? parsedMaxBatches : undefined;
             await op.astTranslate(
                 targetItems,
                 async (batchResult, batchIndex, totalBatchesVal) => {
@@ -189,7 +205,8 @@ export const useAstTranslation = () => {
                     }));
                     updateAstItems(updates);
                 },
-                abortControllerRef.current.signal
+                abortControllerRef.current.signal,
+                limit
             );
 
             toast.success(t('Common.Notices.BatchTranslateSuccess'));
@@ -216,6 +233,8 @@ export const useAstTranslation = () => {
             batchSize,
             concurrencyLimit,
             overwrite,
+            maxBatches,
+            maxBatchesError,
 
             inputError,
             concurrencyError,
@@ -239,6 +258,7 @@ export const useAstTranslation = () => {
             setBatchSize: handleBatchSizeChange, // Note: this is change handler, not setter
             setConcurrencyLimit: handleConcurrencyLimitChange,
             setOverwrite,
+            setMaxBatches: handleMaxBatchesChange,
 
             handleTimeoutChange,
             handleBatchSizeBlur,

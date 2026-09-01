@@ -55,30 +55,33 @@ export abstract class BaseProvider implements ITranslationProvider {
         return profiles?.find((p: any) => p.id === activeId) || profiles?.[0];
     }
 
-    public async regexTranslate(items: RegexItem[], onBatchComplete: OnRegexBatchComplete, signal?: AbortSignal): Promise<RegexItem[]> {
+    public async regexTranslate(items: RegexItem[], onBatchComplete: OnRegexBatchComplete, signal?: AbortSignal, maxBatches?: number): Promise<RegexItem[]> {
         return this.executeParallelBatches(
             items,
             (batch, sig) => this.callRegexTranslationAPI(batch, sig),
             onBatchComplete,
-            signal
+            signal,
+            maxBatches
         );
     }
 
-    public async astTranslate(items: AstItem[], onBatchComplete: OnAstBatchComplete, signal?: AbortSignal): Promise<AstItem[]> {
+    public async astTranslate(items: AstItem[], onBatchComplete: OnAstBatchComplete, signal?: AbortSignal, maxBatches?: number): Promise<AstItem[]> {
         return this.executeParallelBatches(
             items,
             (batch, sig) => this.callAstTranslationAPI(batch, sig),
             onBatchComplete,
-            signal
+            signal,
+            maxBatches
         );
     }
 
-    public async themeTranslate(items: ThemeTranslationItem[], onBatchComplete: OnThemeBatchComplete, signal?: AbortSignal): Promise<ThemeTranslationItem[]> {
+    public async themeTranslate(items: ThemeTranslationItem[], onBatchComplete: OnThemeBatchComplete, signal?: AbortSignal, maxBatches?: number): Promise<ThemeTranslationItem[]> {
         return this.executeParallelBatches(
             items,
             (batch, sig) => this.callThemeTranslationAPI(batch, sig),
             onBatchComplete,
-            signal
+            signal,
+            maxBatches
         );
     }
 
@@ -164,10 +167,13 @@ export abstract class BaseProvider implements ITranslationProvider {
         items: T[],
         callApi: (batch: T[], signal?: AbortSignal) => Promise<T[]>,
         onBatchComplete: (batchResult: T[], batchIndex: number, totalBatches: number) => void | Promise<void>,
-        signal?: AbortSignal
+        signal?: AbortSignal,
+        maxBatches?: number
     ): Promise<T[]> {
         this.validateInput(items);
-        const batches = this.splitIntoBatches(items);
+        const allBatches = this.splitIntoBatches(items);
+        // 若指定了最大批次次数（>0），则只取前 maxBatches 个批次
+        const batches = (maxBatches && maxBatches > 0) ? allBatches.slice(0, maxBatches) : allBatches;
         const totalBatches = batches.length;
         const resultsBuffer: T[][] = new Array(totalBatches);
 

@@ -60,21 +60,24 @@ export interface ITranslationProvider {
     regexTranslate(
         items: RegexItem[],
         onBatchComplete: OnRegexBatchComplete,
-        signal?: AbortSignal
+        signal?: AbortSignal,
+        maxBatches?: number
     ): Promise<RegexItem[]>;
 
     /** AST 模式批量翻译 */
     astTranslate(
         items: AstItem[],
         onBatchComplete: OnAstBatchComplete,
-        signal?: AbortSignal
+        signal?: AbortSignal,
+        maxBatches?: number
     ): Promise<AstItem[]>;
 
     /** Theme 模式批量翻译 */
     themeTranslate(
         items: ThemeTranslationItem[],
         onBatchComplete: OnThemeBatchComplete,
-        signal?: AbortSignal
+        signal?: AbortSignal,
+        maxBatches?: number
     ): Promise<ThemeTranslationItem[]>;
 
     /** Token 数量与成本估算 */
