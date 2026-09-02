@@ -2,7 +2,7 @@ import fs from 'fs';
 import { PluginTranslationV1Regex } from '~/types';
 import { I18nSettings } from 'src/settings/data';
 
-import { REGEX_DEFAULT_CONFIG } from './config';
+import { REGEX_DEFAULT_CONFIG, DOM_EVENT_NAMES, HARDCODED_WORDS } from './config';
 
 // Regex 翻译器
 
@@ -58,11 +58,12 @@ export class RegexTranslator {
 
         this.patterns = regexps.filter(p => p !== '').map(p => new RegExp(p, this.settings.reFlags || 'gs'));
 
-        // 初始化过滤正则 (排除型)
-        const rejectRes = (this.settings.reRejectRe && this.settings.reRejectRe.length > 0)
-            ? this.settings.reRejectRe
-            : REGEX_DEFAULT_CONFIG.rejectPatterns;
-        this.rejectPatterns = rejectRes.map(p => new RegExp(p));
+        // 初始化过滤正则 (排除型：合并系统默认排除规则与用户自定义排除规则)
+        const userReject = (this.settings.reRejectRe || []).map(p => {
+            try { return new RegExp(p); } catch { return null; }
+        }).filter(Boolean) as RegExp[];
+        const systemReject = REGEX_DEFAULT_CONFIG.rejectPatterns.map(p => new RegExp(p));
+        this.rejectPatterns = [...systemReject, ...userReject];
 
         // 初始化验证正则 (有效型)
         const validRes = (this.settings.reValidRe && this.settings.reValidRe.length > 0)
@@ -73,6 +74,12 @@ export class RegexTranslator {
 
     private isValidText(text: string): boolean {
         if (!text || text.length > this.settings.reLength) return false;
+
+        // 0. 系统强硬排除：DOM 事件名与硬编码保留词
+        const lower = text.toLowerCase();
+        if (DOM_EVENT_NAMES.has(lower) || HARDCODED_WORDS.has(text)) {
+            return false;
+        }
 
         // 1. 检查排除正则 (命中任一则排除)
         for (const re of this.rejectPatterns) {

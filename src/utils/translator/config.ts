@@ -50,7 +50,10 @@ export const AST_DEFAULT_RULES = {
         /^rgba?\(/i,                                   // RGBA 颜色
         /^\./,                                         // 以点开头 (选择器)
         /\.(png|jpg|gif|svg|css|js|ts|md|json)$/i,     // 文件扩展名
-        /^[\w.\/\\-]+\/[\w.\/\\-]+$/                   // 文件路径
+        /^[\w.\/\\-]+\/[\w.\/\\-]+$/,                  // 文件路径
+        // DOM/浏览器事件名：这类字符串最终作为 addEventListener 的事件类型参数，翻译后事件监听静默失效
+        /^(pointer|touch|mouse|key|drag|wheel|focus|blur|input|change|scroll|resize|select|copy|cut|paste|animation|transition)(cancel|start|end|move|up|down|enter|leave|over|out|in|change)?$/,
+        /^(click|dblclick|contextmenu|submit|reset|load|unload|abort|error|hashchange|popstate|message|online|offline|beforeunload|DOMContentLoaded)$/,
     ],
     VALID_PATTERNS: [
         /\s/,                                          // 包含空格 (通常是人类语言句子)
@@ -73,6 +76,59 @@ export const LOGIC_STRING_METHODS = new Set([
 ]);
 
 /**
+ * 事件注册方法名
+ * 这些方法的第一个字符串参数是事件名，翻译后会导致事件监听静默失效
+ * 例如: addEventListener('mousemove', ...) / on('change', ...) / emit('close')
+ */
+export const EVENT_LISTENER_METHODS = new Set([
+    'addEventListener', 'removeEventListener', 'dispatchEvent',
+    'on', 'off', 'once', 'emit', 'trigger', 'fire',
+    'addListener', 'removeListener', 'prependListener', 'prependOnceListener',
+    'subscribe', 'unsubscribe', 'publish'
+]);
+
+/**
+ * 原生 DOM / 浏览器与常用框架事件名称清单
+ * 这些字符串如果被提取翻译，会导致事件监听与交互彻底静默失效
+ */
+export const DOM_EVENT_NAMES = new Set([
+    // Mouse
+    'click', 'dblclick', 'mousedown', 'mouseup', 'mousemove', 'mouseover',
+    'mouseout', 'mouseenter', 'mouseleave', 'contextmenu', 'wheel', 'auxclick',
+    // Pointer
+    'pointerdown', 'pointerup', 'pointermove', 'pointerover', 'pointerout',
+    'pointerenter', 'pointerleave', 'pointercancel', 'gotpointercapture', 'lostpointercapture',
+    // Touch
+    'touchstart', 'touchend', 'touchmove', 'touchcancel',
+    // Keyboard
+    'keydown', 'keyup', 'keypress',
+    // Drag & Drop
+    'drag', 'dragstart', 'dragend', 'dragenter', 'dragleave', 'dragover', 'drop',
+    // Focus
+    'focus', 'blur', 'focusin', 'focusout',
+    // Form & Input
+    'input', 'beforeinput', 'change', 'submit', 'reset', 'invalid', 'search',
+    // Clipboard
+    'copy', 'cut', 'paste',
+    // Composition
+    'compositionstart', 'compositionupdate', 'compositionend',
+    // Animation & Transition
+    'animationstart', 'animationend', 'animationiteration', 'animationcancel',
+    'transitionstart', 'transitionend', 'transitionrun', 'transitioncancel',
+    // Window / Document / Lifecycle
+    'scroll', 'scrollend', 'resize', 'load', 'unload', 'beforeunload', 'error',
+    'abort', 'hashchange', 'popstate', 'pageshow', 'pagehide', 'visibilitychange',
+    'domcontentloaded', 'readystatechange', 'online', 'offline', 'message', 'storage',
+    // Media
+    'play', 'pause', 'ended', 'timeupdate', 'volumechange', 'seeking', 'seeked',
+    'loadeddata', 'loadedmetadata', 'canplay', 'canplaythrough', 'ratechange',
+    'durationchange', 'fullscreenchange', 'fullscreenerror',
+    // Obsidian 特有事件名
+    'layout-change', 'active-leaf-change', 'file-open', 'quit', 'create',
+    'modify', 'delete', 'rename', 'open', 'close', 'split'
+]);
+
+/**
  * 翻译后会破坏语言机制 / 模块互操作的硬编码依赖词
  * 例如 esbuild 的 __toESM 辅助函数使用 Object.defineProperty(n, "default", {...})，
  * 一旦把 "default" 翻译掉，React 等 CJS 模块的 default 导出即失效 (BUG-001)
@@ -85,6 +141,50 @@ export const HARDCODED_WORDS = new Set([
 
 /** 判定为「程序逻辑」的二元运算符 (比较 + 成员判定) */
 export const LOGIC_BINARY_OPERATORS = new Set(['===', '!==', '==', '!=', 'in', 'instanceof']);
+
+// ============================================================================
+// 2.5 DOM 结构安全 (类名 / 标签名 / 属性名)
+// ============================================================================
+
+/**
+ * DOM 创建函数及其「不可翻译」的位置参数索引
+ *
+ * Obsidian 的 createEl / createDiv / createSpan / createSvg 支持字符串简写:
+ *   createDiv("message-segment markdown-rendered") === createDiv({ cls: "message-segment markdown-rendered" })
+ * 同时 createEl / createSvg 的第 0 个参数是 HTML 标签名 ("div" / "button")。
+ * 二者一旦翻译: CSS 规则失效、querySelector / closest / getElementById 静默失配、
+ * 标签名被替换后更是直接无法创建元素。属于不可翻译的 DOM 结构信息。
+ */
+export const DOM_CREATE_SHORTHAND_ARGS: Record<string, number[]> = {
+    createEl: [0, 1],   // 0 = HTML 标签名, 1 = cls 简写
+    createSvg: [0, 1],
+    createDiv: [0],     // cls 简写
+    createSpan: [0],
+};
+
+/**
+ * 结构性对象键：其值是类名 / 选择器 / 标识符 / 机器取值，永远不是 UI 文案
+ * 注意：这里不能放 name —— addCommand({ name: "..." }) 正是需要翻译的典型场景
+ */
+export const STRUCTURAL_KEYS = new Set([
+    // 类名与选择器
+    'cls', 'class', 'classname', 'classnames', 'classlist', 'selector', 'query', 'queryselector',
+    // 标识符
+    'id', 'key', 'ref', 'tag', 'for',
+    // 样式与资源地址
+    'style', 'href', 'src', 'url', 'path',
+    // HTML 属性
+    'attr', 'type', 'icon', 'target', 'rel', 'role', 'dataset'
+]);
+
+/**
+ * 仅在 DOM 创建函数上下文中不可翻译的键
+ * 例如 createEl('input', { name: 'group1' }) 的 name 是 HTML name 属性 (分组标识)
+ *
+ * value 不放进上面的全局黑名单: 通用语境下 (如 { value: "Some label" })
+ * 它可能就是展示文案，只在 createEl/createDiv 等 DOM 创建函数里才是机器取值
+ */
+export const DOM_CREATE_STRUCTURAL_KEYS = new Set(['name', 'value']);
 
 // ============================================================================
 // 3. Regex 提取相关配置
@@ -102,7 +202,9 @@ export const REGEX_DEFAULT_CONFIG = {
         "^data:image\\/", "^#([0-9a-f]{3}|[0-9a-f]{6})$", "^[a-z0-9]+-[a-z0-9-]+$",
         "^[a-z]+[A-Z][a-zA-Z0-9]*$", "^[A-Z_][A-Z0-9_]{3,}$", "^(px|em|rem|vh|vw|auto)$",
         "^rgba?\\(", "^\\.", "\\.(png|jpg|gif|svg|css|js|ts|md|json)$",
-        "^[\\w.\\/\\\\-]+\\/[\\w.\\/\\\\-]+$"
+        "^[\\w.\\/\\\\-]+\\/[\\w.\\/\\\\-]+$",
+        "^(pointer|touch|mouse|key|drag|wheel|focus|blur|input|change|scroll|resize|select|copy|cut|paste|animation|transition)(cancel|start|end|move|up|down|enter|leave|over|out|in|change)?$",
+        "^(click|dblclick|contextmenu|submit|reset|load|unload|abort|error|hashchange|popstate|message|online|offline|beforeunload|DOMContentLoaded)$"
     ],
     /** 默认有效正则字符串列表 */
     validPatterns: [

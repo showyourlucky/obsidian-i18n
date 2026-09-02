@@ -16,7 +16,8 @@ import { I18nSettings } from '../../settings/data';
  */
 import {
     AST_DEFAULT_CONFIG, AST_DEFAULT_RULES,
-    HARDCODED_WORDS, LOGIC_BINARY_OPERATORS, LOGIC_STRING_METHODS
+    HARDCODED_WORDS, LOGIC_BINARY_OPERATORS, LOGIC_STRING_METHODS, EVENT_LISTENER_METHODS, DOM_EVENT_NAMES,
+    DOM_CREATE_SHORTHAND_ARGS, STRUCTURAL_KEYS, DOM_CREATE_STRUCTURAL_KEYS
 } from './config';
 
 export class AstTranslator {
@@ -36,12 +37,17 @@ export class AstTranslator {
             keys: this.settings?.astKeys || AST_DEFAULT_CONFIG.keys,
         };
 
+        const userReject = (this.settings?.astRejectRe || []).map((re: string) => {
+            try { return new RegExp(re); } catch { return null; }
+        }).filter(Boolean) as RegExp[];
+
         this.contentRules = {
-            REJECT_PATTERNS: (this.settings?.astRejectRe || []).length > 0
-                ? this.settings!.astRejectRe.map((re: string) => new RegExp(re))
-                : AST_DEFAULT_RULES.REJECT_PATTERNS,
+            // 系统内置基础安全正则永远生效，同时追加用户的自定义排除正则
+            REJECT_PATTERNS: [...AST_DEFAULT_RULES.REJECT_PATTERNS, ...userReject],
             VALID_PATTERNS: (this.settings?.astValidRe || []).length > 0
-                ? this.settings!.astValidRe.map((re: string) => new RegExp(re))
+                ? this.settings!.astValidRe.map((re: string) => {
+                    try { return new RegExp(re); } catch { return null; }
+                }).filter(Boolean) as RegExp[]
                 : AST_DEFAULT_RULES.VALID_PATTERNS,
         };
     }
@@ -114,9 +120,10 @@ export class AstTranslator {
         });
 
         // 2. 遍历所有字符串节点 (不限于白名单，以支持手动添加的条目)
-        this.traverseAllStrings(ast, (type, name, valueNode, safe) => {
+        this.traverseAllStrings(ast, (type, name, valueNode, safe, structural) => {
             const source = this.extractSource(valueNode);
-            if (!source) return;
+            // 类名 / 标签名 / 标识符：命中也不替换 (历史翻译包里可能残留这类条目)
+            if (!source || structural) return;
 
             // 尝试匹配
             let target = strictMap.get(this.getFingerprint({ type, name, source } as any));
@@ -158,10 +165,10 @@ export class AstTranslator {
             looseMap.set(item.source, item.target);
         });
 
-        // 2. 遍历所有匹配项
-        this.traverseAllStrings(ast, (type, name, valueNode, safe) => {
+        // 2. 遍历所有匹配项 (口径与 translate() 保持一致)
+        this.traverseAllStrings(ast, (type, name, valueNode, safe, structural) => {
             const source = this.extractSource(valueNode);
-            if (!source) return;
+            if (!source || structural) return;
 
             const fingerprint = this.getFingerprint({ type, name, source } as any);
             if (strictMap.has(fingerprint)) {
@@ -291,7 +298,13 @@ export class AstTranslator {
      */
     private isValidText(text: string): boolean {
         // 0. 基础长度
-        if (text.length < 2) return false;
+        if (!text || text.length < 2) return false;
+
+        // 0.1 系统强硬排除：DOM 事件名与硬编码逻辑词
+        const lower = text.toLowerCase();
+        if (DOM_EVENT_NAMES.has(lower) || HARDCODED_WORDS.has(text)) {
+            return false;
+        }
 
         // 1. 拒绝匹配任何 REJECT 模式
         if (this.contentRules.REJECT_PATTERNS.some((regex: RegExp) => regex.test(text))) {
@@ -342,7 +355,7 @@ export class AstTranslator {
             ObjectProperty: (path) => {
                 const node = path.node;
                 const name = this.getObjKeyName(node.key);
-                if (name && this.config.keys.includes(name) && this.isStrNode(node.value)) {
+                if (name && this.config.keys.includes(name) && !this.isStructuralKey(name) && this.isStrNode(node.value)) {
                     callback('ObjectProperty', name, node.value);
                 }
             },
@@ -351,15 +364,18 @@ export class AstTranslator {
                 const node = path.node;
                 const name = this.getCallName(node.callee);
                 if (name && this.config.functions.includes(name)) {
-                    node.arguments.forEach(arg => {
+                    const skipArgs = DOM_CREATE_SHORTHAND_ARGS[name] || [];
+                    node.arguments.forEach((arg, index) => {
+                        // createEl("div", "cls-shorthand") 这类位置参数属于 DOM 结构，跳过
+                        if (skipArgs.includes(index)) return;
                         if (this.isStrNode(arg)) {
                             callback('CallExpression', name, arg);
                         } else if (t.isObjectExpression(arg)) {
-                            // 深度提取：提取白名单函数参数对象中的所有字符串值
+                            // 深度提取：提取白名单函数参数对象中的所有字符串值 (排除结构性键)
                             arg.properties.forEach(prop => {
                                 if (t.isObjectProperty(prop)) {
                                     const propName = this.getObjKeyName(prop.key) || 'prop';
-                                    if (this.isStrNode(prop.value)) {
+                                    if (!this.isStructuralKey(propName, name) && this.isStrNode(prop.value)) {
                                         callback('ObjectProperty', propName, prop.value);
                                     }
                                 }
@@ -373,7 +389,9 @@ export class AstTranslator {
                 const node = path.node;
                 const name = this.getCallName(node.callee);
                 if (name && this.config.functions.includes(name)) {
-                    node.arguments.forEach(arg => {
+                    const skipArgs = DOM_CREATE_SHORTHAND_ARGS[name] || [];
+                    node.arguments.forEach((arg, index) => {
+                        if (skipArgs.includes(index)) return;
                         if (this.isStrNode(arg)) {
                             callback('NewExpression', name, arg);
                         } else if (t.isObjectExpression(arg)) {
@@ -381,7 +399,7 @@ export class AstTranslator {
                             arg.properties.forEach(prop => {
                                 if (t.isObjectProperty(prop)) {
                                     const propName = this.getObjKeyName(prop.key) || 'prop';
-                                    if (this.isStrNode(prop.value)) {
+                                    if (!this.isStructuralKey(propName, name) && this.isStrNode(prop.value)) {
                                         callback('ObjectProperty', propName, prop.value);
                                     }
                                 }
@@ -399,10 +417,12 @@ export class AstTranslator {
      *
      * 回调的第四个参数 `safe` 表示该字符串是否「不参与程序逻辑」。
      * 只有 safe 为 true 时才允许使用宽松匹配 (仅按 source 文本) 回退。
+     * 回调的第五个参数 `structural` 表示该字符串属于 DOM 结构信息 (类名 / 标签名 / 标识符)，
+     * 无论严格还是宽松匹配都必须跳过，否则会破坏样式与选择器。
      */
     private traverseAllStrings(
         ast: t.Node,
-        callback: (type: string, name: string, valueNode: t.StringLiteral | t.TemplateLiteral, safe: boolean) => void
+        callback: (type: string, name: string, valueNode: t.StringLiteral | t.TemplateLiteral, safe: boolean, structural: boolean) => void
     ) {
         /** 上报一个字符串节点，并同步计算其上下文安全性 */
         const report = (
@@ -411,7 +431,7 @@ export class AstTranslator {
             name: string,
             valueNode: t.StringLiteral | t.TemplateLiteral
         ) => {
-            callback(type, name, valueNode, !this.isLogicString(strPath));
+            callback(type, name, valueNode, !this.isLogicString(strPath), this.isStructuralContext(strPath));
         };
 
         traverse(ast, {
@@ -492,9 +512,66 @@ export class AstTranslator {
         // 4. 对象键 (计算属性除外)
         if (t.isObjectProperty(parent) && parent.key === node && !parent.computed) return true;
 
-        // 5. 硬编码依赖词 (模块互操作 / 语言关键字)
+        // 5. 硬编码依赖词 (模块互操作 / 语言关键字) 与 DOM 事件名
         const raw = this.extractSource(node);
-        if (raw && HARDCODED_WORDS.has(raw)) return true;
+        if (raw && (HARDCODED_WORDS.has(raw) || DOM_EVENT_NAMES.has(raw.toLowerCase()))) return true;
+
+        // 6. 事件注册方法的第一个参数 (事件名)
+        // addEventListener('mousemove', ...) / on('change', ...) / emit('close')
+        // 翻译后事件监听器静默失效，不报错但功能完全失效
+        if (t.isCallExpression(parent) && Array.isArray(parent.arguments) && parent.arguments[0] === node) {
+            const callee = parent.callee;
+            let methodName: string | null = null;
+            if (t.isIdentifier(callee)) methodName = callee.name;
+            else if (t.isMemberExpression(callee) && t.isIdentifier(callee.property)) {
+                methodName = callee.property.name;
+            }
+            if (methodName && EVENT_LISTENER_METHODS.has(methodName)) return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * 判断对象键是否属于结构性键 (其值为类名 / 选择器 / 标识符 / 机器取值，不可翻译)
+     * @param key 对象键名
+     * @param fnName 所在的函数调用名 (用于区分 DOM 创建函数上下文)
+     */
+    private isStructuralKey(key: string, fnName?: string | null): boolean {
+        const k = (key || '').toLowerCase();
+        if (STRUCTURAL_KEYS.has(k)) return true;
+        // data-* 自定义属性 / dataset 成员
+        if (/^data[-A-Z]/.test(key)) return true;
+        // createEl('input', { name: 'group1' })：HTML name 属性是分组标识
+        if (fnName && DOM_CREATE_SHORTHAND_ARGS[fnName] && DOM_CREATE_STRUCTURAL_KEYS.has(k)) return true;
+        return false;
+    }
+
+    /**
+     * 判断字符串节点是否处于 DOM 结构位置 (不可翻译)
+     * 1. 结构性对象键的值: { cls: "..." } / { id: "..." }
+     * 2. DOM 创建函数的简写参数: createDiv("message-segment markdown-rendered") / createEl("div", "cls")
+     *
+     * @param path 字符串字面量自身的 NodePath
+     */
+    private isStructuralContext(path: any): boolean {
+        const node = path?.node;
+        const parent = path?.parentPath?.node;
+        if (!node || !parent) return false;
+
+        // 1. 对象属性的值
+        if (t.isObjectProperty(parent) && parent.value === node && !parent.computed) {
+            const keyName = this.getObjKeyName(parent.key);
+            if (keyName && this.isStructuralKey(keyName)) return true;
+        }
+
+        // 2. 函数调用的位置参数
+        if ((t.isCallExpression(parent) || t.isNewExpression(parent)) && Array.isArray(parent.arguments)) {
+            const index = (parent.arguments as any[]).indexOf(node);
+            const fnName = this.getCallName(parent.callee);
+            const skipArgs = fnName ? DOM_CREATE_SHORTHAND_ARGS[fnName] : null;
+            if (index >= 0 && skipArgs && skipArgs.includes(index)) return true;
+        }
 
         return false;
     }
