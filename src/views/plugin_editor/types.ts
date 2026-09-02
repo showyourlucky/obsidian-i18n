@@ -29,6 +29,8 @@ export type DiagnoseError = {
     id: number;
     source: string;
     isUnused?: boolean;
+    /** 逻辑审计命中项：已翻译但实际是逻辑字符串，替换后功能会静默失效 */
+    isLogic?: boolean;
     severity?: 'error' | 'warning' | 'critical';
     message?: string;
 };

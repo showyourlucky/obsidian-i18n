@@ -35,7 +35,9 @@ interface Props {
     isDiagnosing?: boolean;
     isUnusedScan?: boolean;
     isSecurityScan?: boolean;
+    isLogicScan?: boolean;
     onSecurityDiagnose?: () => void;
+    onLogicDiagnose?: () => void;
     errorItems?: DiagnoseError[];
     hasChecked?: boolean;
     setActiveTab?: (tab: string) => void;
@@ -64,7 +66,9 @@ const RegexSidebar: React.FC<Props> = ({
     onDeleteUnused,
     isUnusedScan,
     isSecurityScan,
+    isLogicScan,
     onSecurityDiagnose,
+    onLogicDiagnose,
     isApplied,
     onJumpError,
     onAiFixError
@@ -150,12 +154,14 @@ const RegexSidebar: React.FC<Props> = ({
                         onDiagnose={onDiagnose!}
                         onUnusedDiagnose={onUnusedDiagnose}
                         onSecurityDiagnose={onSecurityDiagnose}
+                        onLogicDiagnose={onLogicDiagnose}
                         onDeleteUnused={onDeleteUnused}
                         onClear={onClearDiagnose!}
                         onRestoreAllErrors={onRestoreAllErrors}
                         isDiagnosing={isDiagnosing!}
                         isUnusedScan={isUnusedScan}
                         isSecurityScan={isSecurityScan}
+                        isLogicScan={isLogicScan}
                         errorItems={errorItems || []}
                         hasChecked={hasChecked}
                         setActiveTab={setActiveTab}

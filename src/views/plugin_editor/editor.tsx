@@ -16,6 +16,7 @@ import { RegexEditor, AstEditor } from '.';
 
 import { useGlobalStoreInstance } from '~/utils';
 import { AstTranslator, RegexTranslator, mergeAstItems, mergeRegexItems, mountReactView, StringPicker } from '~/utils';
+import { LogicStringHit } from '~/utils/translator/core-ast-translator';
 import { calculateChecksum } from '@/src/utils/translator/translation';
 import { saveTranslationFile } from '@/src/manager/io-manager';
 import { createTranslationProvider } from '~/ai/provider-factory';
@@ -125,6 +126,7 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
     const [isDiagnosing, setIsDiagnosing] = useState(false);
     const [isUnusedScan, setIsUnusedScan] = useState(false);
     const [isSecurityScan, setIsSecurityScan] = useState(false);
+    const [isLogicScan, setIsLogicScan] = useState(false);
     const [errorItems, setErrorItems] = useState<DiagnoseError[]>([]);
     const [hasChecked, setHasChecked] = useState(false);
     const [activeTab, setActiveTab] = useState('ast');
@@ -344,64 +346,76 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
 
 
     // ================================================== Diagnose ==================================================
+
+    /**
+     * 解析当前文件的原始源码 (内存缓存 → 磁盘 → 备份)
+     * 语法诊断 / 冗余诊断 / 逻辑审计 共用同一套取源口径
+     */
+    const resolveSourceContext = React.useCallback(async (): Promise<{ code: string, currentFile: string, pluginId: string } | null> => {
+        const { metadata, currentFile, sourceCache, setSourceCache } = useRegexStore.getState();
+        if (!metadata) {
+            notice.error(t('Editor.Errors.NoMetadata'));
+            return null;
+        }
+
+        if (!currentFile || !currentFile.endsWith('.js')) {
+            notice.info(t('Editor.Errors.NotJs'));
+            return null;
+        }
+
+        const pluginId = metadata.plugin;
+        const isApplied = !!i18n.stateManager.getPluginState(pluginId)?.isApplied;
+
+        // 1. 内存缓存优先
+        let code = sourceCache[currentFile] || '';
+
+        // 2. 未应用时磁盘上的文件就是原始代码
+        if (!code && !isApplied) {
+            try {
+                // @ts-ignore
+                const manifest = i18n.app.plugins.manifests[pluginId];
+                if (manifest) {
+                    // @ts-ignore
+                    const basePath = path.normalize(i18n.app.vault.adapter.getBasePath());
+                    const targetFilePath = path.join(basePath, manifest.dir || '', currentFile);
+                    if (fs.existsSync(targetFilePath)) {
+                        code = fs.readFileSync(targetFilePath, 'utf8');
+                    }
+                }
+            } catch (e) {
+                console.warn("Failed to read original source from disk, falling back to backup.", e);
+            }
+        }
+
+        // 3. 回退到备份
+        if (!code) {
+            code = (await i18n.backupManager.getBackupContent(pluginId, currentFile)) || '';
+        }
+
+        if (!code) {
+            notice.error(t('Editor.Errors.NoBackup'));
+            return null;
+        }
+
+        setSourceCache(currentFile, code);
+        return { code, currentFile, pluginId };
+    }, [i18n, notice, t]);
+
     const handleDiagnose = React.useCallback(async () => {
         if (isDiagnosing) return;
         setIsDiagnosing(true);
+        setIsUnusedScan(false);
+        setIsSecurityScan(false);
+        setIsLogicScan(false);
         setErrorItems([]);
         setHasChecked(true);
         try {
-            const { regexItems, astItems, metadata, currentFile, sourceCache, setSourceCache } = useRegexStore.getState();
-            if (!metadata) {
-                notice.error(t('Editor.Errors.NoMetadata'));
-                return;
-            }
-
-            const pluginId = metadata.plugin;
-
-            if (!currentFile || !currentFile.endsWith('.js')) {
-                notice.info(t('Editor.Errors.NotJs'));
-                return;
-            }
-
-            const state = i18n.stateManager.getPluginState(pluginId);
-            const isApplied = !!(state && state.isApplied);
+            const { regexItems, astItems } = useRegexStore.getState();
 
             // 1. 获取源代码 (内存优先)
-            let originalCode: string | null = sourceCache[currentFile];
-            if (!originalCode) {
-                // 如果未译 (isApplied === false)，优先尝试从磁盘读取实际文件 (因为它就是原始代码)
-                if (!isApplied) {
-                    try {
-                        // @ts-ignore
-                        const manifest = i18n.app.plugins.manifests[pluginId];
-                        if (manifest) {
-                            // @ts-ignore
-                            const basePath = path.normalize(i18n.app.vault.adapter.getBasePath());
-                            const pluginDir = path.join(basePath, manifest.dir || '');
-                            const targetFilePath = path.join(pluginDir, currentFile);
-                            if (fs.existsSync(targetFilePath)) {
-                                originalCode = fs.readFileSync(targetFilePath, 'utf8');
-                            }
-                        }
-                    } catch (e) {
-                        console.warn("Failed to read original source from disk, falling back to backup.", e);
-                    }
-                }
-
-                // 如果仍为空 (已译或读取磁盘失败)，则从备份获取
-                if (!originalCode) {
-                    originalCode = await i18n.backupManager.getBackupContent(pluginId, currentFile);
-                }
-
-                if (originalCode) {
-                    setSourceCache(currentFile, originalCode);
-                }
-            }
-
-            if (!originalCode) {
-                notice.error(t('Editor.Errors.NoBackup'));
-                return;
-            }
+            const sourceContext = await resolveSourceContext();
+            if (!sourceContext) return;
+            const { code: originalCode, currentFile, pluginId } = sourceContext;
 
             const results: DiagnoseError[] = [];
 
@@ -571,6 +585,7 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
         setIsDiagnosing(true);
         setIsUnusedScan(false);
         setIsSecurityScan(true);
+        setIsLogicScan(false);
         setErrorItems([]);
         setHasChecked(true);
 
@@ -627,55 +642,17 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
         setIsDiagnosing(true);
         setIsUnusedScan(true);
         setIsSecurityScan(false);
+        setIsLogicScan(false);
         setErrorItems([]);
         setHasChecked(true);
 
         try {
-            const { regexItems, astItems, metadata, currentFile, sourceCache, setSourceCache } = useRegexStore.getState();
-            if (!metadata) {
-                notice.error(t('Editor.Errors.NoMetadata'));
-                return;
-            }
-
-            const pluginId = metadata.plugin;
-
-            if (!currentFile || !currentFile.endsWith('.js')) {
-                notice.info(t('Editor.Errors.NotJs'));
-                return;
-            }
+            const { regexItems, astItems } = useRegexStore.getState();
 
             // 获取源代码 (逻辑同 handleDiagnose)
-            const state = i18n.stateManager.getPluginState(pluginId);
-            const isApplied = !!(state && state.isApplied);
-            let originalCode: string | null = sourceCache[currentFile];
-            if (!originalCode) {
-                if (!isApplied) {
-                    try {
-                        // @ts-ignore
-                        const manifest = i18n.app.plugins.manifests[pluginId];
-                        if (manifest) {
-                            // @ts-ignore
-                            const basePath = path.normalize(i18n.app.vault.adapter.getBasePath());
-                            const pluginDir = path.join(basePath, manifest.dir || '');
-                            const targetFilePath = path.join(pluginDir, currentFile);
-                            if (fs.existsSync(targetFilePath)) {
-                                originalCode = fs.readFileSync(targetFilePath, 'utf8');
-                            }
-                        }
-                    } catch (e) { }
-                }
-                if (!originalCode) {
-                    originalCode = await i18n.backupManager.getBackupContent(pluginId, currentFile);
-                }
-                if (originalCode) {
-                    setSourceCache(currentFile, originalCode);
-                }
-            }
-
-            if (!originalCode) {
-                notice.error(t('Editor.Errors.NoBackup'));
-                return;
-            }
+            const sourceContext = await resolveSourceContext();
+            if (!sourceContext) return;
+            const { code: originalCode } = sourceContext;
 
             const results: DiagnoseError[] = [];
             const astTranslator = new AstTranslator(i18n.settings);
@@ -727,12 +704,80 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
         } finally {
             setIsDiagnosing(false);
         }
-    }, [i18n, notice, t, isDiagnosing]);
+    }, [i18n, notice, t, isDiagnosing, resolveSourceContext]);
+
+    /**
+     * 逻辑审计的命中原因 → 本地化描述
+     */
+    const describeLogicReason = React.useCallback((hit: LogicStringHit) => {
+        switch (hit.reason) {
+            case 'method': return t('Editor.Errors.LogicReasonMethod', { value: hit.context });
+            case 'binary': return t('Editor.Errors.LogicReasonBinary', { value: hit.context });
+            case 'switch': return t('Editor.Errors.LogicReasonSwitch');
+            case 'objectKey': return t('Editor.Errors.LogicReasonObjectKey');
+            case 'hardcoded': return t('Editor.Errors.LogicReasonHardcoded');
+            case 'eventName': return t('Editor.Errors.LogicReasonEventName');
+            default: return t('Editor.Errors.LogicReasonEvent', { value: hit.context });
+        }
+    }, [t]);
+
+    /**
+     * 逻辑审计
+     * 语法诊断依赖「沙箱重启」，只能抓会导致崩溃的条目；
+     * 而事件名 / 比较值 / 分支值 / 对象键被翻译后插件照常运行、功能却静默失效，崩溃类诊断查不到。
+     * 这里对源码做一次完整静态扫描，把这类「已翻译的逻辑字符串」全部列出，供用户一键还原。
+     */
+    const handleLogicAudit = React.useCallback(async () => {
+        if (isDiagnosing) return;
+        setIsDiagnosing(true);
+        setIsUnusedScan(false);
+        setIsSecurityScan(false);
+        setIsLogicScan(true);
+        setErrorItems([]);
+        setHasChecked(true);
+
+        try {
+            const { astItems, regexItems } = useRegexStore.getState();
+            const sourceContext = await resolveSourceContext();
+            if (!sourceContext) return;
+            const { code } = sourceContext;
+
+            const baseAst = astTranslator.loadCode(code);
+            if (!baseAst) {
+                notice.error(t('Editor.Errors.SourceError'));
+                return;
+            }
+
+            const hits = astTranslator.auditLogicStrings(baseAst, astItems, regexItems, code);
+
+            const results: DiagnoseError[] = hits.map(hit => ({
+                type: hit.kind,
+                id: hit.id,
+                source: hit.source,
+                isLogic: true,
+                message: hit.line > 0
+                    ? `${describeLogicReason(hit)} · ${t('Editor.Errors.LogicLine', { line: hit.line })}`
+                    : describeLogicReason(hit)
+            }));
+
+            setErrorItems(results);
+            if (results.length === 0) {
+                notice.success(t('Editor.Notices.DiagnosisSuccess'));
+            } else {
+                notice.error(t('Editor.Errors.LogicTotal', { count: results.length }));
+            }
+        } catch (e) {
+            notice.error(t('Common.Status.Failure') + ': ' + e);
+        } finally {
+            setIsDiagnosing(false);
+        }
+    }, [astTranslator, describeLogicReason, notice, t, isDiagnosing, resolveSourceContext]);
 
     const handleClearDiagnose = React.useCallback(() => {
         setErrorItems([]);
         setHasChecked(false);
         setIsUnusedScan(false);
+        setIsLogicScan(false);
     }, []);
 
     const handleDeleteUnused = React.useCallback(() => {
@@ -1018,12 +1063,14 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
                                     onDiagnose={handleDiagnose}
                                     onUnusedDiagnose={handleUnusedDiagnose}
                                     onSecurityDiagnose={handleSecurityDiagnose}
+                                    onLogicDiagnose={handleLogicAudit}
                                     onDeleteUnused={handleDeleteUnused}
                                     onClearDiagnose={handleClearDiagnose}
                                     onRestoreAllErrors={handleRestoreAllErrors}
                                     isDiagnosing={isDiagnosing}
                                     isUnusedScan={isUnusedScan}
                                     isSecurityScan={isSecurityScan}
+                                    isLogicScan={isLogicScan}
                                     errorItems={errorItems}
                                     hasChecked={hasChecked}
                                     setActiveTab={setActiveTab}
@@ -1040,12 +1087,14 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
                                     onDiagnose={handleDiagnose}
                                     onUnusedDiagnose={handleUnusedDiagnose}
                                     onSecurityDiagnose={handleSecurityDiagnose}
+                                    onLogicDiagnose={handleLogicAudit}
                                     onDeleteUnused={handleDeleteUnused}
                                     onClearDiagnose={handleClearDiagnose}
                                     onRestoreAllErrors={handleRestoreAllErrors}
                                     isDiagnosing={isDiagnosing}
                                     isUnusedScan={isUnusedScan}
                                     isSecurityScan={isSecurityScan}
+                                    isLogicScan={isLogicScan}
                                     errorItems={errorItems}
                                     hasChecked={hasChecked}
                                     setActiveTab={setActiveTab}

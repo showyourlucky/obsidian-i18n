@@ -4,7 +4,7 @@ import { TemplateCard } from './template-card';
 import {
     Activity, AlertTriangle, CheckCircle2, ChevronRight,
     Trash2, RotateCcw, ShieldAlert, Search, Eraser, Play,
-    CircleDot, ChevronDown, Sparkles, Loader2
+    CircleDot, ChevronDown, Sparkles, Loader2, Binary
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from "~/utils";
@@ -14,6 +14,7 @@ interface DiagnoseCardProps {
     onDiagnose: () => void;
     onUnusedDiagnose?: () => void;
     onSecurityDiagnose?: () => void;
+    onLogicDiagnose?: () => void;
     onDeleteUnused?: () => void;
     onClear?: () => void;
     onRestoreAllErrors?: () => void;
@@ -21,18 +22,20 @@ interface DiagnoseCardProps {
     isDiagnosing: boolean;
     isUnusedScan?: boolean;
     isSecurityScan?: boolean;
+    isLogicScan?: boolean;
     errorItems: DiagnoseError[];
     hasChecked?: boolean;
     setActiveTab?: (tab: string) => void;
     onJumpError?: (error: DiagnoseError) => void;
 }
 
-type ScanMode = 'syntax' | 'unused' | 'security';
+type ScanMode = 'syntax' | 'unused' | 'security' | 'logic';
 
 export const DiagnoseCard: React.FC<DiagnoseCardProps> = ({
     onDiagnose,
     onUnusedDiagnose,
     onSecurityDiagnose,
+    onLogicDiagnose,
     onDeleteUnused,
     onClear,
     onRestoreAllErrors,
@@ -40,6 +43,7 @@ export const DiagnoseCard: React.FC<DiagnoseCardProps> = ({
     isDiagnosing,
     isUnusedScan,
     isSecurityScan,
+    isLogicScan,
     errorItems,
     hasChecked,
     setActiveTab,
@@ -61,10 +65,12 @@ export const DiagnoseCard: React.FC<DiagnoseCardProps> = ({
         }));
     };
 
-    const securityErrors = errorItems.filter(e => e.severity === 'critical' || e.severity === 'warning');
-    const syntaxErrors = errorItems.filter(e => (!e.severity || e.severity === 'error') && !e.isUnused);
-    const unusedErrors = errorItems.filter(e => e.isUnused);
+    const logicErrors = errorItems.filter(e => e.isLogic);
+    const securityErrors = errorItems.filter(e => !e.isLogic && (e.severity === 'critical' || e.severity === 'warning'));
+    const syntaxErrors = errorItems.filter(e => !e.isLogic && (!e.severity || e.severity === 'error') && !e.isUnused);
+    const unusedErrors = errorItems.filter(e => !e.isLogic && e.isUnused);
 
+    const logicCount = logicErrors.length;
     const securityCount = securityErrors.length;
     const errorCount = syntaxErrors.length;
     const unusedCount = unusedErrors.length;
@@ -72,7 +78,7 @@ export const DiagnoseCard: React.FC<DiagnoseCardProps> = ({
 
     // 当前正在扫描的类型
     const currentScanType: ScanMode | null = isDiagnosing
-        ? (isSecurityScan ? 'security' : isUnusedScan ? 'unused' : 'syntax')
+        ? (isLogicScan ? 'logic' : isSecurityScan ? 'security' : isUnusedScan ? 'unused' : 'syntax')
         : null;
 
     const handleScan = () => {
@@ -80,6 +86,17 @@ export const DiagnoseCard: React.FC<DiagnoseCardProps> = ({
             case 'syntax': onDiagnose(); break;
             case 'unused': onUnusedDiagnose?.(); break;
             case 'security': onSecurityDiagnose?.(); break;
+            case 'logic': onLogicDiagnose?.(); break;
+        }
+    };
+
+    // 扫描中的状态文案
+    const getScanningLabel = (mode: ScanMode) => {
+        switch (mode) {
+            case 'unused': return t('Editor.Status.DiagnosingUnused');
+            case 'security': return t('Editor.Status.DiagnosingSecurity');
+            case 'logic': return t('Editor.Status.DiagnosingLogic');
+            default: return t('Editor.Status.Diagnosing');
         }
     };
 
@@ -87,6 +104,7 @@ export const DiagnoseCard: React.FC<DiagnoseCardProps> = ({
         { key: 'syntax', icon: Activity, label: t('Editor.Actions.Diagnose'), color: 'text-blue-500' },
         { key: 'unused', icon: Search, label: t('Editor.Actions.UnusedDiagnose'), color: 'text-orange-500' },
         { key: 'security', icon: ShieldAlert, label: t('Editor.Actions.SecurityDiagnose'), color: 'text-purple-500' },
+        { key: 'logic', icon: Binary, label: t('Editor.Actions.LogicDiagnose'), color: 'text-cyan-500' },
     ];
 
     // 获取当前模式的颜色信息
@@ -98,6 +116,8 @@ export const DiagnoseCard: React.FC<DiagnoseCardProps> = ({
                 return { accent: 'orange', bg: 'bg-orange-500/10', border: 'border-orange-500/20', text: 'text-orange-600 dark:text-orange-400', hoverBg: 'hover:bg-orange-500/20' };
             case 'security':
                 return { accent: 'purple', bg: 'bg-purple-500/10', border: 'border-purple-500/20', text: 'text-purple-600 dark:text-purple-400', hoverBg: 'hover:bg-purple-500/20' };
+            case 'logic':
+                return { accent: 'cyan', bg: 'bg-cyan-500/10', border: 'border-cyan-500/20', text: 'text-cyan-600 dark:text-cyan-400', hoverBg: 'hover:bg-cyan-500/20' };
         }
     };
 
@@ -106,6 +126,15 @@ export const DiagnoseCard: React.FC<DiagnoseCardProps> = ({
     // 获取错误项的样式
     const getErrorStyles = (error: DiagnoseError) => {
         const isSecurity = error.severity === 'critical' || error.severity === 'warning';
+        if (error.isLogic) {
+            return {
+                bg: 'bg-cyan-500/5 hover:bg-cyan-500/10',
+                border: 'border-cyan-500/15 hover:border-cyan-500/30',
+                text: 'text-cyan-600 dark:text-cyan-400',
+                dot: 'bg-cyan-500',
+                badgeBg: 'bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-cyan-500/20',
+            };
+        }
         if (isSecurity) {
             return {
                 bg: 'bg-purple-500/5 hover:bg-purple-500/10',
@@ -136,6 +165,7 @@ export const DiagnoseCard: React.FC<DiagnoseCardProps> = ({
     // 获取错误项的标签
     const getErrorLabel = (error: DiagnoseError) => {
         const isSecurity = error.severity === 'critical' || error.severity === 'warning';
+        if (error.isLogic) return t('Editor.Errors.Logic');
         if (isSecurity) {
             return error.severity === 'critical' ? t('Editor.Errors.SecurityCritical') : t('Editor.Errors.SecurityWarning');
         }
@@ -149,7 +179,7 @@ export const DiagnoseCard: React.FC<DiagnoseCardProps> = ({
         >
             <div className="space-y-3">
                 {/* ═══════ 扫描模式选择器 ═══════ */}
-                <div className="flex items-center gap-1 p-0.5 rounded-lg bg-muted/50">
+                <div className="grid grid-cols-2 gap-1 p-0.5 rounded-lg bg-muted/50">
                     {scanModes.map(mode => {
                         const isActive = activeMode === mode.key;
                         const isScanning = currentScanType === mode.key;
@@ -194,7 +224,7 @@ export const DiagnoseCard: React.FC<DiagnoseCardProps> = ({
                         {isDiagnosing && currentScanType === activeMode ? (
                             <>
                                 <Activity className="w-3.5 h-3.5 animate-spin" />
-                                {t('Editor.Status.Diagnosing')}
+                                {getScanningLabel(activeMode)}
                             </>
                         ) : (
                             <>
@@ -266,6 +296,12 @@ export const DiagnoseCard: React.FC<DiagnoseCardProps> = ({
                     <>
                         <Separator />
                         <div className="flex items-center gap-2">
+                            {logicCount > 0 && (
+                                <Badge variant="outline" className="bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-cyan-500/20 text-[10px] px-1.5 py-0 h-5 gap-1">
+                                    <Binary className="w-3 h-3" />
+                                    {logicCount}
+                                </Badge>
+                            )}
                             {securityCount > 0 && (
                                 <Badge variant="outline" className="bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20 text-[10px] px-1.5 py-0 h-5 gap-1">
                                     <ShieldAlert className="w-3 h-3" />
@@ -346,7 +382,7 @@ export const DiagnoseCard: React.FC<DiagnoseCardProps> = ({
                                         {/* 右侧操作按钮 */}
                                         <div className="flex items-center gap-0.5 shrink-0 mt-0.5">
                                             {/* AI 修复按钮 (仅语法错误模式下可用) */}
-                                            {onAiFixError && !error.isUnused && error.severity !== 'critical' && error.severity !== 'warning' && (
+                                            {onAiFixError && !error.isUnused && !error.isLogic && error.severity !== 'critical' && error.severity !== 'warning' && (
                                                 <Tooltip>
                                                     <TooltipTrigger asChild>
                                                         <button

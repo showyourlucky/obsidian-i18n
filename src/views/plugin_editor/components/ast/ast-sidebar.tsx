@@ -46,7 +46,9 @@ const AstSidebar = ({
     onDeleteUnused,
     isUnusedScan,
     isSecurityScan,
+    isLogicScan,
     onSecurityDiagnose,
+    onLogicDiagnose,
     isApplied,
     onJumpError,
     onAiFixError
@@ -70,7 +72,9 @@ const AstSidebar = ({
     isDiagnosing?: boolean,
     isUnusedScan?: boolean,
     isSecurityScan?: boolean,
+    isLogicScan?: boolean,
     onSecurityDiagnose?: () => void,
+    onLogicDiagnose?: () => void,
     errorItems?: DiagnoseError[],
     hasChecked?: boolean,
     setActiveTab?: (value: string) => void,
@@ -158,12 +162,14 @@ const AstSidebar = ({
                         onDiagnose={onDiagnose!}
                         onUnusedDiagnose={onUnusedDiagnose}
                         onSecurityDiagnose={onSecurityDiagnose}
+                        onLogicDiagnose={onLogicDiagnose}
                         onDeleteUnused={onDeleteUnused}
                         onClear={onClearDiagnose!}
                         onRestoreAllErrors={onRestoreAllErrors}
                         isDiagnosing={isDiagnosing!}
                         isUnusedScan={isUnusedScan}
                         isSecurityScan={isSecurityScan}
+                        isLogicScan={isLogicScan}
                         errorItems={errorItems || []}
                         hasChecked={hasChecked}
                         setActiveTab={setActiveTab}

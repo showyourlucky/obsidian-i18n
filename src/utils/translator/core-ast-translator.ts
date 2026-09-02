@@ -3,7 +3,7 @@ import { parse, parseExpression } from "@babel/parser";
 import traverse from '@babel/traverse';
 import { generate } from "@babel/generator";
 import * as t from '@babel/types';
-import { PluginTranslationV1Ast } from '~/types';
+import { PluginTranslationV1Ast, PluginTranslationV1Regex } from '~/types';
 import { I18nSettings } from '../../settings/data';
 
 // ====================================================================================================
@@ -19,6 +19,54 @@ import {
     HARDCODED_WORDS, LOGIC_BINARY_OPERATORS, LOGIC_STRING_METHODS, EVENT_LISTENER_METHODS, DOM_EVENT_NAMES,
     DOM_CREATE_SHORTHAND_ARGS, STRUCTURAL_KEYS, DOM_CREATE_STRUCTURAL_KEYS
 } from './config';
+
+/**
+ * 逻辑字符串的判定原因 (用于逻辑审计的结果展示)
+ */
+export type LogicReason =
+    | 'method'      // 参与字符串方法调用: startsWith / includes / replace ...
+    | 'binary'      // 参与二元比较: === / in / instanceof ...
+    | 'switch'      // switch case 分支值
+    | 'objectKey'   // 对象键名
+    | 'hardcoded'   // 硬编码依赖词: module / default ...
+    | 'eventName'   // DOM 事件名: click / mousemove ...
+    | 'event';      // 事件注册方法的首参: addEventListener('mousemove')
+
+/** 判定命中逻辑字符串时的详情 */
+export interface LogicStringInfo {
+    reason: LogicReason;
+    /** 触发判定的上下文 (方法名 / 运算符 / 事件名 / 键名) */
+    context: string;
+}
+
+/** 源码中单个字符串字面量的上下文信息 (逻辑审计的扫描产物) */
+export interface StringContextInfo {
+    type: string;
+    name: string;
+    source: string;
+    fingerprint: string;
+    /** 源码偏移，用于 Regex 条目的位置映射 (-1 表示无位置信息) */
+    start: number;
+    end: number;
+    line: number;
+    /** 处于 DOM 结构位置 (类名 / 标签名)，translate() 会主动跳过 */
+    structural: boolean;
+    /** 参与程序逻辑：翻译后不会崩溃，但判断/分支/事件监听会静默失效 */
+    logic: boolean;
+    reason: LogicReason | null;
+    context: string;
+}
+
+/** 逻辑审计命中项 */
+export interface LogicStringHit {
+    kind: 'ast' | 'regex';
+    id: number;
+    source: string;
+    target: string;
+    reason: LogicReason;
+    context: string;
+    line: number;
+}
 
 export class AstTranslator {
     private settings: I18nSettings;
@@ -182,6 +230,199 @@ export class AstTranslator {
         return hitFingerprints;
     }
 
+    /**
+     * 逻辑审计 (静态扫描，不重载插件)
+     *
+     * 语法诊断依赖「沙箱重启」，只能抓出会让插件直接崩溃的条目；
+     * 而逻辑字符串 (事件名 / 比较值 / 分支值 / 对象键) 被翻译后插件照常运行，
+     * 只是对应功能静默失效，崩溃类诊断完全查不到。
+     *
+     * 本方法对源码做一次完整扫描，结合 translate() 的实际替换口径，
+     * 列出所有「已翻译且命中逻辑字符串」的条目，供用户一键还原:
+     *   - AST 条目：严格指纹命中 (translate() 中严格匹配不校验 safe，正是风险来源)
+     *   - Regex 条目：纯文本替换，按源码位置映射回字符串字面量后判定
+     *
+     * @param ast 原始源码 AST
+     * @param astItems AST 翻译条目
+     * @param regexItems Regex 翻译条目
+     * @param code 原始源码全文 (Regex 条目定位用，缺省时跳过 Regex 审计)
+     */
+    public auditLogicStrings(
+        ast: t.Node,
+        astItems: (PluginTranslationV1Ast & { id?: number })[] = [],
+        regexItems: (PluginTranslationV1Regex & { id?: number })[] = [],
+        code: string = ''
+    ): LogicStringHit[] {
+        const hits: LogicStringHit[] = [];
+        const seen = new Set<string>();
+
+        // 1. 严格指纹查找表 (只关心已翻译的条目)
+        const strictMap = new Map<string, PluginTranslationV1Ast & { id?: number }>();
+        for (const item of astItems) {
+            if (!item.type || !item.name) continue;
+            if (!item.source || !item.target || item.source === item.target) continue;
+            strictMap.set(this.getFingerprint(item), item);
+        }
+
+        // 2. 扫描源码中所有字符串字面量的上下文 (按起始位置升序，供 Regex 条目二分定位)
+        const contexts: StringContextInfo[] = [];
+        this.traverseAllLiterals(ast, ctx => contexts.push(ctx));
+        contexts.sort((a, b) => a.start - b.start);
+
+        const push = (kind: 'ast' | 'regex', item: { id?: number, source: string, target: string }, ctx: StringContextInfo) => {
+            const id = item.id ?? -1;
+            const key = `${kind}:${id}`;
+            if (seen.has(key)) return;
+            seen.add(key);
+            hits.push({
+                kind,
+                id,
+                source: item.source,
+                target: item.target,
+                reason: ctx.reason as LogicReason,
+                context: ctx.context,
+                line: ctx.line
+            });
+        };
+
+        // 3. AST 条目：严格指纹命中逻辑上下文 → 翻译后功能静默失效
+        for (const ctx of contexts) {
+            if (!ctx.logic || !ctx.reason) continue;
+            const item = strictMap.get(ctx.fingerprint);
+            if (item) push('ast', item, ctx);
+        }
+
+        // 4. Regex 条目：纯文本替换，任一命中点落在逻辑字符串上即视为风险
+        if (code) {
+            for (const item of regexItems) {
+                if (!item.source || !item.target || item.source === item.target) continue;
+                for (const [start, end] of this.locateLiteralRanges(code, item.source)) {
+                    let hit: StringContextInfo | null = null;
+                    for (const ctx of this.contextsInRange(contexts, start, end)) {
+                        if (ctx.logic && ctx.reason) { hit = ctx; break; }
+                    }
+                    if (hit) push('regex', item, hit);
+                }
+            }
+        }
+
+        return hits;
+    }
+
+    /**
+     * 全字面量遍历器 (仅用于审计，不影响翻译口径)
+     *
+     * traverseAllStrings 只覆盖 5 类可翻译位置，而 Regex 翻译器是纯文本替换，
+     * 会命中二元比较、switch case 等它根本不遍历的字面量。
+     * 审计必须看到全部字面量，否则会漏报 Regex 条目的风险。
+     */
+    private traverseAllLiterals(ast: t.Node, callback: (info: StringContextInfo) => void) {
+        const visit = (path: any) => {
+            const valueNode = path.node as t.StringLiteral | t.TemplateLiteral;
+            const source = this.extractSource(valueNode);
+            if (!source) return;
+
+            const logic = this.logicStringReason(path);
+            const structural = this.isStructuralContext(path);
+            const { type, name } = this.describeLiteralContext(path);
+
+            callback({
+                type,
+                name,
+                source,
+                // 无有效上下文 (如二元比较中的字面量) 不参与 AST 条目的指纹匹配
+                fingerprint: type && name ? this.getFingerprint({ type, name, source } as any) : '',
+                start: valueNode.start ?? -1,
+                end: valueNode.end ?? -1,
+                line: valueNode.loc?.start.line ?? 0,
+                structural,
+                logic: logic !== null && !structural,
+                reason: logic?.reason ?? null,
+                context: logic?.context ?? ''
+            });
+        };
+
+        traverse(ast, {
+            StringLiteral: visit,
+            TemplateLiteral: visit
+        });
+    }
+
+    /** 推断字符串字面量所处的上下文类型与名称 (口径与 traverseAllStrings 保持一致) */
+    private describeLiteralContext(path: any): { type: string, name: string } {
+        const node = path.node;
+        const parent = path.parentPath?.node;
+        if (!parent) return { type: '', name: '' };
+
+        if (t.isVariableDeclarator(parent) && parent.init === node) {
+            return { type: 'VariableDeclarator', name: t.isIdentifier(parent.id) ? parent.id.name : 'var' };
+        }
+        if (t.isAssignmentExpression(parent) && parent.right === node) {
+            return { type: 'AssignmentExpression', name: this.getAssignName(parent.left) || 'assign' };
+        }
+        if (t.isObjectProperty(parent) && parent.value === node) {
+            return { type: 'ObjectProperty', name: this.getObjKeyName(parent.key) || 'prop' };
+        }
+        if (t.isCallExpression(parent) && Array.isArray(parent.arguments) && (parent.arguments as any[]).includes(node)) {
+            return { type: 'CallExpression', name: this.getCallName(parent.callee) || 'func' };
+        }
+        if (t.isNewExpression(parent) && Array.isArray(parent.arguments) && (parent.arguments as any[]).includes(node)) {
+            return { type: 'NewExpression', name: this.getCallName(parent.callee) || 'new' };
+        }
+        return { type: '', name: '' };
+    }
+
+    /** 二分定位与 [start, end) 区间相交的字符串字面量上下文 */
+    private contextsInRange(contexts: StringContextInfo[], start: number, end: number): StringContextInfo[] {
+        const result: StringContextInfo[] = [];
+        if (start < 0 || end <= start) return result;
+
+        // 找到第一个 end > start 的位置
+        let lo = 0, hi = contexts.length;
+        while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            if (contexts[mid].end <= start) lo = mid + 1;
+            else hi = mid;
+        }
+
+        for (let i = lo; i < contexts.length; i++) {
+            if (contexts[i].start >= end) break;
+            result.push(contexts[i]);
+        }
+        return result;
+    }
+
+    /**
+     * 定位 Regex 条目 source 在源码中的替换区间
+     * 口径与 RegexTranslator.replaceLiteral 保持一致:
+     *   - source 自带引号 (如 "Cancel" / Notice("Cancel"))：整体替换
+     *   - source 为裸文本 (如 default)：仅替换被引号完整包裹的片段
+     */
+    private locateLiteralRanges(code: string, source: string): [number, number][] {
+        const ranges: [number, number][] = [];
+        if (!source) return ranges;
+
+        const wrapped = /["'`]/.test(source);
+        let from = 0;
+        while (true) {
+            const idx = code.indexOf(source, from);
+            if (idx === -1) break;
+            from = idx + 1;
+
+            if (wrapped) {
+                ranges.push([idx, idx + source.length]);
+                continue;
+            }
+
+            // 裸文本：两侧必须是同种引号，区间向外扩一格以覆盖引号
+            const before = idx > 0 ? code[idx - 1] : '';
+            const after = code[idx + source.length] || '';
+            if (before && before === after && (before === '"' || before === "'" || before === '`')) {
+                ranges.push([idx - 1, idx + source.length + 1]);
+            }
+        }
+        return ranges;
+    }
 
     /**
      * 验证目标内容的安全性 (精准版)
@@ -364,7 +605,7 @@ export class AstTranslator {
                 const node = path.node;
                 const name = this.getCallName(node.callee);
                 if (name && this.config.functions.includes(name)) {
-                    const skipArgs = DOM_CREATE_SHORTHAND_ARGS[name] || [];
+                    const skipArgs = this.getShorthandSkipArgs(name);
                     node.arguments.forEach((arg, index) => {
                         // createEl("div", "cls-shorthand") 这类位置参数属于 DOM 结构，跳过
                         if (skipArgs.includes(index)) return;
@@ -389,7 +630,7 @@ export class AstTranslator {
                 const node = path.node;
                 const name = this.getCallName(node.callee);
                 if (name && this.config.functions.includes(name)) {
-                    const skipArgs = DOM_CREATE_SHORTHAND_ARGS[name] || [];
+                    const skipArgs = this.getShorthandSkipArgs(name);
                     node.arguments.forEach((arg, index) => {
                         if (skipArgs.includes(index)) return;
                         if (this.isStrNode(arg)) {
@@ -419,10 +660,18 @@ export class AstTranslator {
      * 只有 safe 为 true 时才允许使用宽松匹配 (仅按 source 文本) 回退。
      * 回调的第五个参数 `structural` 表示该字符串属于 DOM 结构信息 (类名 / 标签名 / 标识符)，
      * 无论严格还是宽松匹配都必须跳过，否则会破坏样式与选择器。
+     * 回调的第六个参数 `logic` 为 null 表示安全；否则为该字符串参与程序逻辑的原因详情。
      */
     private traverseAllStrings(
         ast: t.Node,
-        callback: (type: string, name: string, valueNode: t.StringLiteral | t.TemplateLiteral, safe: boolean, structural: boolean) => void
+        callback: (
+            type: string,
+            name: string,
+            valueNode: t.StringLiteral | t.TemplateLiteral,
+            safe: boolean,
+            structural: boolean,
+            logic?: LogicStringInfo | null
+        ) => void
     ) {
         /** 上报一个字符串节点，并同步计算其上下文安全性 */
         const report = (
@@ -431,7 +680,8 @@ export class AstTranslator {
             name: string,
             valueNode: t.StringLiteral | t.TemplateLiteral
         ) => {
-            callback(type, name, valueNode, !this.isLogicString(strPath), this.isStructuralContext(strPath));
+            const logic = this.logicStringReason(strPath);
+            callback(type, name, valueNode, logic === null, this.isStructuralContext(strPath), logic);
         };
 
         traverse(ast, {
@@ -481,55 +731,68 @@ export class AstTranslator {
 
     /**
      * 判断字符串节点是否参与程序逻辑 (不可翻译)
-     * 参与逻辑的字符串翻译后会导致判断/比较/分支失效
+     * 参与逻辑的字符串翻译后会导致判断/比较/分支/事件监听静默失效
      *
      * @param path 字符串字面量自身的 NodePath
      */
-    private isLogicString(path: any): boolean {
-        if (!path || !path.parentPath) return false;
+    public isLogicString(path: any): boolean {
+        return this.logicStringReason(path) !== null;
+    }
+
+    /**
+     * 判定字符串节点参与程序逻辑的原因
+     * 参与逻辑的字符串翻译后会导致判断/比较/分支/事件监听静默失效
+     *
+     * @param path 字符串字面量自身的 NodePath
+     * @returns 命中时返回原因与上下文，安全时返回 null
+     */
+    private logicStringReason(path: any): LogicStringInfo | null {
+        if (!path || !path.parentPath) return null;
 
         const node = path.node;
         const parent = path.parentPath.node;
-        if (!node || !parent) return false;
+        if (!node || !parent) return null;
+
+        /** 提取调用方法名: fn("x") -> fn, obj.startsWith("x") -> startsWith */
+        const getMethodName = (callee: any): string | null => {
+            if (t.isIdentifier(callee)) return callee.name;
+            if (t.isMemberExpression(callee) && t.isIdentifier(callee.property)) return callee.property.name;
+            return null;
+        };
 
         // 1. 字符串方法调用: x.startsWith("abc") / x.includes("abc")
         if (t.isCallExpression(parent) && Array.isArray(parent.arguments) && parent.arguments.includes(node)) {
-            const callee = parent.callee;
-            let methodName: string | null = null;
-            if (t.isIdentifier(callee)) methodName = callee.name;
-            else if (t.isMemberExpression(callee) && t.isIdentifier(callee.property)) {
-                methodName = callee.property.name;
-            }
-            if (methodName && LOGIC_STRING_METHODS.has(methodName)) return true;
+            const methodName = getMethodName(parent.callee);
+            if (methodName && LOGIC_STRING_METHODS.has(methodName)) return { reason: 'method', context: methodName };
         }
 
         // 2. 二元比较 / 成员判定: x === "abc" / "abc" === x / "abc" in obj
-        if (t.isBinaryExpression(parent) && LOGIC_BINARY_OPERATORS.has(parent.operator)) return true;
+        if (t.isBinaryExpression(parent) && LOGIC_BINARY_OPERATORS.has(parent.operator)) {
+            return { reason: 'binary', context: parent.operator };
+        }
 
         // 3. switch case 分支值
-        if (t.isSwitchCase(parent) && parent.test === node) return true;
+        if (t.isSwitchCase(parent) && parent.test === node) return { reason: 'switch', context: 'case' };
 
         // 4. 对象键 (计算属性除外)
-        if (t.isObjectProperty(parent) && parent.key === node && !parent.computed) return true;
+        if (t.isObjectProperty(parent) && parent.key === node && !parent.computed) {
+            return { reason: 'objectKey', context: 'key' };
+        }
 
         // 5. 硬编码依赖词 (模块互操作 / 语言关键字) 与 DOM 事件名
         const raw = this.extractSource(node);
-        if (raw && (HARDCODED_WORDS.has(raw) || DOM_EVENT_NAMES.has(raw.toLowerCase()))) return true;
+        if (raw && DOM_EVENT_NAMES.has(raw.toLowerCase())) return { reason: 'eventName', context: raw };
+        if (raw && HARDCODED_WORDS.has(raw)) return { reason: 'hardcoded', context: raw };
 
         // 6. 事件注册方法的第一个参数 (事件名)
         // addEventListener('mousemove', ...) / on('change', ...) / emit('close')
         // 翻译后事件监听器静默失效，不报错但功能完全失效
         if (t.isCallExpression(parent) && Array.isArray(parent.arguments) && parent.arguments[0] === node) {
-            const callee = parent.callee;
-            let methodName: string | null = null;
-            if (t.isIdentifier(callee)) methodName = callee.name;
-            else if (t.isMemberExpression(callee) && t.isIdentifier(callee.property)) {
-                methodName = callee.property.name;
-            }
-            if (methodName && EVENT_LISTENER_METHODS.has(methodName)) return true;
+            const methodName = getMethodName(parent.callee);
+            if (methodName && EVENT_LISTENER_METHODS.has(methodName)) return { reason: 'event', context: methodName };
         }
 
-        return false;
+        return null;
     }
 
     /**
@@ -543,8 +806,23 @@ export class AstTranslator {
         // data-* 自定义属性 / dataset 成员
         if (/^data[-A-Z]/.test(key)) return true;
         // createEl('input', { name: 'group1' })：HTML name 属性是分组标识
-        if (fnName && DOM_CREATE_SHORTHAND_ARGS[fnName] && DOM_CREATE_STRUCTURAL_KEYS.has(k)) return true;
+        if (fnName && this.getShorthandSkipArgs(fnName).length > 0 && DOM_CREATE_STRUCTURAL_KEYS.has(k)) return true;
         return false;
+    }
+
+    /**
+     * 安全读取 DOM 创建函数的「不可翻译位置参数」索引
+     *
+     * DOM_CREATE_SHORTHAND_ARGS 是普通对象字面量，带 Object.prototype 原型链。
+     * getCallName 对成员调用返回属性名，因此 x.toString("literal") 会得到 fnName = 'toString'，
+     * 直接索引会取到 Object.prototype.toString (函数)，后续 .includes(index) 即
+     * "TypeError: ... includes is not a function"。此处只认自有属性并校验数组类型。
+     */
+    private getShorthandSkipArgs(fnName: string | null | undefined): number[] {
+        if (!fnName) return [];
+        if (!Object.prototype.hasOwnProperty.call(DOM_CREATE_SHORTHAND_ARGS, fnName)) return [];
+        const args = DOM_CREATE_SHORTHAND_ARGS[fnName];
+        return Array.isArray(args) ? args : [];
     }
 
     /**
@@ -569,8 +847,7 @@ export class AstTranslator {
         if ((t.isCallExpression(parent) || t.isNewExpression(parent)) && Array.isArray(parent.arguments)) {
             const index = (parent.arguments as any[]).indexOf(node);
             const fnName = this.getCallName(parent.callee);
-            const skipArgs = fnName ? DOM_CREATE_SHORTHAND_ARGS[fnName] : null;
-            if (index >= 0 && skipArgs && skipArgs.includes(index)) return true;
+            if (index >= 0 && this.getShorthandSkipArgs(fnName).includes(index)) return true;
         }
 
         return false;
