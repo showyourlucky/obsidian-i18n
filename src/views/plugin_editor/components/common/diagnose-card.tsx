@@ -9,6 +9,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { cn } from "~/utils";
 import { DiagnoseError } from '../../types';
+import { EDITOR_EVENTS } from '../../events';
 
 interface DiagnoseCardProps {
     onDiagnose: () => void;
@@ -60,7 +61,7 @@ export const DiagnoseCard: React.FC<DiagnoseCardProps> = ({
         if (onJumpError) {
             onJumpError(error);
         }
-        window.dispatchEvent(new CustomEvent('i18n-jump-error', {
+        window.dispatchEvent(new CustomEvent(EDITOR_EVENTS.JumpError, {
             detail: { type: error.type, id: error.id }
         }));
     };

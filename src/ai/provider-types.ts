@@ -6,6 +6,7 @@
  */
 
 import { RegexItem, AstItem } from '../views/plugin_editor/types';
+import { AiVerdict } from '../types';
 import { ThemeTranslationItem } from '../views/theme_editor/types';
 
 /** Provider 类型枚举 */
@@ -52,6 +53,27 @@ export type OnThemeBatchComplete = (
     totalBatches: number
 ) => void | Promise<void>;
 
+/** AI 判定单条条目 */
+export interface JudgeItem {
+    id: number;
+    source: string;
+    type?: string;
+    name?: string;
+    propKey?: string;     // 属性键名 (如 placeholder/className/children)
+    argIndex?: number;    // 实参下标 (如 createElement 第 0 参为标签名)
+    snippet?: string;     // 源码上下文片段 (兜底)
+    verdict: AiVerdict;   // 判定结果 (默认 unjudged)
+    reason?: string;
+    confidence?: number;
+}
+
+/** 批次完成回调 (Judge) */
+export type OnJudgeBatchComplete = (
+    batchResult: JudgeItem[],
+    batchIndex: number,
+    totalBatches: number
+) => void | Promise<void>;
+
 /**
  * 翻译服务提供商统一接口
  */
@@ -83,7 +105,7 @@ export interface ITranslationProvider {
     /** Token 数量与成本估算 */
     estimateTokens(
         items: any[],
-        type: 'regex' | 'ast' | 'theme'
+        type: 'regex' | 'ast' | 'theme' | 'judge'
     ): { tokens: number; cost: number };
 
     /**
@@ -100,4 +122,15 @@ export interface ITranslationProvider {
         target: string,
         errorMessage: string,
     ): Promise<string>;
+
+    /** AI 判定 AST 条目是否需要翻译 */
+    judgeTranslatable(
+        items: JudgeItem[],
+        onBatchComplete: OnJudgeBatchComplete,
+        signal?: AbortSignal,
+        maxBatches?: number
+    ): Promise<JudgeItem[]>;
+
+    /** 该 Provider 是否支持 AI 判定能力（供 UI 隐藏入口） */
+    supportsJudge(): boolean;
 }

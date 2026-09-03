@@ -11,7 +11,8 @@ import { Button, Tabs, TabsContent, TabsList, TabsTrigger, Select, SelectContent
 import { Save, Loader2, Plus, Trash2, ChevronDown, Folder, File, Info, Calendar, Hash, ChevronRight } from 'lucide-react';
 import { useRegexStore } from './store';
 
-import { EditorProps, DiagnoseError } from './types';
+import { EditorProps, DiagnoseError, SourceFingerprint } from './types';
+import { EDITOR_EVENTS } from './events';
 import { RegexEditor, AstEditor } from '.';
 
 import { useGlobalStoreInstance } from '~/utils';
@@ -34,6 +35,20 @@ import { TemplateCard } from './components/common/template-card';
 // ====================================================================================================
 // 子组件 & 辅助功能
 // ====================================================================================================
+
+/**
+ * 读取源码文件的磁盘指纹 (mtime + size)，用于判断源码缓存是否已过期。
+ * 读取失败时返回 null，交由调用方按「无法校验」处理（保守起见会重新取源）。
+ */
+function readFileFingerprint(filePath: string): SourceFingerprint | null {
+    try {
+        if (!fs.existsSync(filePath)) return null;
+        const stat = fs.statSync(filePath);
+        return { mtimeMs: stat.mtimeMs, size: stat.size };
+    } catch {
+        return null;
+    }
+}
 
 const SaveButton: React.FC<{ onSave: () => void; isSaving: boolean }> = React.memo(({ onSave, isSaving }) => {
     const { t } = useTranslation();
@@ -344,62 +359,111 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
         }
     }, [i18n, notice, t]);
 
+    // 上下文预览：定位单元格「在源码中查看」触发打开当前文件
+    React.useEffect(() => {
+        const handler = () => { handleOpenFile(); };
+        window.addEventListener(EDITOR_EVENTS.OpenSource, handler);
+        return () => window.removeEventListener(EDITOR_EVENTS.OpenSource, handler);
+    }, [handleOpenFile]);
+
 
     // ================================================== Diagnose ==================================================
 
     /**
      * 解析当前文件的原始源码 (内存缓存 → 磁盘 → 备份)
      * 语法诊断 / 冗余诊断 / 逻辑审计 共用同一套取源口径
+     *
+     * 缓存命中时先用磁盘指纹 (mtime + size) 校验：插件更新或手动改写会导致
+     * main.js 被整体替换，此时缓存内容与条目里的 start/end 已对不上，
+     * 必须丢弃缓存重新取源，否则预览会静默停留在旧版本代码上。
      */
-    const resolveSourceContext = React.useCallback(async (): Promise<{ code: string, currentFile: string, pluginId: string } | null> => {
+    const resolveSourceContext = React.useCallback(async (options?: { silent?: boolean }): Promise<{ code: string, currentFile: string, pluginId: string } | null> => {
+        const silent = options?.silent === true;
         const { metadata, currentFile, sourceCache, setSourceCache } = useRegexStore.getState();
         if (!metadata) {
-            notice.error(t('Editor.Errors.NoMetadata'));
+            if (!silent) notice.error(t('Editor.Errors.NoMetadata'));
             return null;
         }
 
         if (!currentFile || !currentFile.endsWith('.js')) {
-            notice.info(t('Editor.Errors.NotJs'));
+            if (!silent) notice.info(t('Editor.Errors.NotJs'));
             return null;
         }
 
         const pluginId = metadata.plugin;
-        const isApplied = !!i18n.stateManager.getPluginState(pluginId)?.isApplied;
 
-        // 1. 内存缓存优先
-        let code = sourceCache[currentFile] || '';
+        // 目标文件路径：缓存校验与读盘共用，只解析一次
+        let targetFilePath = '';
+        try {
+            // @ts-ignore
+            const manifest = i18n.app.plugins.manifests[pluginId];
+            if (manifest) {
+                // @ts-ignore
+                const basePath = path.normalize(i18n.app.vault.adapter.getBasePath());
+                targetFilePath = path.join(basePath, manifest.dir || '', currentFile);
+            }
+        } catch (e) {
+            console.warn('[Editor] 解析目标文件路径失败', e);
+        }
+
+        // 1. 内存缓存优先：命中且磁盘指纹未变则直接返回，避免重复读盘
+        const cached = sourceCache[currentFile];
+        if (cached) {
+            const fp = targetFilePath ? readFileFingerprint(targetFilePath) : null;
+            // mtimeMs 为 null 的条目来自备份等无磁盘对应物的来源，不做失效校验
+            const stale = cached.mtimeMs != null
+                && (!fp || fp.mtimeMs !== cached.mtimeMs || fp.size !== cached.size);
+            if (!stale) return { code: cached.code, currentFile, pluginId };
+            if (fp) console.debug(`[Editor] 源码已变更 (${currentFile})，丢弃缓存重新取源`);
+        }
+
+        const isApplied = !!i18n.stateManager.getPluginState(pluginId)?.isApplied;
+        let code = '';
+        let fingerprint: SourceFingerprint | null = null;
 
         // 2. 未应用时磁盘上的文件就是原始代码
-        if (!code && !isApplied) {
+        if (!code && !isApplied && targetFilePath) {
             try {
-                // @ts-ignore
-                const manifest = i18n.app.plugins.manifests[pluginId];
-                if (manifest) {
-                    // @ts-ignore
-                    const basePath = path.normalize(i18n.app.vault.adapter.getBasePath());
-                    const targetFilePath = path.join(basePath, manifest.dir || '', currentFile);
-                    if (fs.existsSync(targetFilePath)) {
-                        code = fs.readFileSync(targetFilePath, 'utf8');
-                    }
+                if (fs.existsSync(targetFilePath)) {
+                    code = fs.readFileSync(targetFilePath, 'utf8');
+                    fingerprint = readFileFingerprint(targetFilePath);
                 }
             } catch (e) {
                 console.warn("Failed to read original source from disk, falling back to backup.", e);
             }
         }
 
-        // 3. 回退到备份
+        // 3. 回退到备份（备份内容无磁盘对应物，不记指纹，不做失效校验）
         if (!code) {
             code = (await i18n.backupManager.getBackupContent(pluginId, currentFile)) || '';
+            fingerprint = null;
         }
 
         if (!code) {
-            notice.error(t('Editor.Errors.NoBackup'));
+            if (!silent) notice.error(t('Editor.Errors.NoBackup'));
             return null;
         }
 
-        setSourceCache(currentFile, code);
+        setSourceCache(currentFile, code, fingerprint);
         return { code, currentFile, pluginId };
     }, [i18n, notice, t]);
+
+    // 上下文预览：定位弹窗懒加载源码 (缓存未命中时读磁盘/备份，静默模式)
+    React.useEffect(() => {
+        const handler = async () => {
+            // 异常也必须派发完成事件：UI 侧的 isLoadingSource 依赖该事件复位，
+            // 若静默吞掉异常，弹窗会永久停在「正在读取源码…」
+            try {
+                const result = await resolveSourceContext({ silent: true });
+                window.dispatchEvent(new CustomEvent(EDITOR_EVENTS.SourceLoaded, { detail: { ok: !!result } }));
+            } catch (e) {
+                console.warn('[Editor] 加载源码失败', e);
+                window.dispatchEvent(new CustomEvent(EDITOR_EVENTS.SourceLoaded, { detail: { ok: false } }));
+            }
+        };
+        window.addEventListener(EDITOR_EVENTS.LoadSource, handler);
+        return () => window.removeEventListener(EDITOR_EVENTS.LoadSource, handler);
+    }, [resolveSourceContext]);
 
     const handleDiagnose = React.useCallback(async () => {
         if (isDiagnosing) return;
@@ -807,7 +871,7 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
     const handleJumpError = React.useCallback((error: DiagnoseError) => {
         setActiveTab(error.type);
         // 通过 CustomEvent 触发表格滚动定位 (由子组件监听)
-        window.dispatchEvent(new CustomEvent('i18n-jump-error', {
+        window.dispatchEvent(new CustomEvent(EDITOR_EVENTS.JumpError, {
             detail: { type: error.type, id: error.id }
         }));
     }, []);
@@ -903,7 +967,7 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
 
     // 广播诊断错误到表格组件，用于行高亮
     useEffect(() => {
-        window.dispatchEvent(new CustomEvent('i18n-diagnose-errors', {
+        window.dispatchEvent(new CustomEvent(EDITOR_EVENTS.DiagnoseErrors, {
             detail: { errors: errorItems }
         }));
     }, [errorItems]);

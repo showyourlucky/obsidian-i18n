@@ -52,10 +52,33 @@ function DialogContent({
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
 }) {
+  const contentRef = React.useRef<HTMLDivElement | null>(null)
+
+  // Obsidian 的界面缩放 (Ctrl+= / 设置 Zoom) 会级联到 body 下的 Portal 弹窗:
+  // zoom≠1 时 fixed + top/left-50% + translate(-50%) 的坐标解析错位, 弹窗恒偏向右下。
+  // 读取宿主 zoom 并反向补偿以恢复视口居中; 未开缩放时为 no-op。
+  React.useLayoutEffect(() => {
+    const el = contentRef.current
+    if (!el) return
+    const compensate = () => {
+      const hostZoom =
+        Number(getComputedStyle(document.body).zoom) ||
+        Number(getComputedStyle(document.documentElement).zoom) ||
+        1
+      // 缩放为 1 时清空反向补偿，否则弹窗打开期间把缩放调回 1 会残留旧值
+      el.style.zoom = Number.isFinite(hostZoom) && hostZoom !== 1 ? String(1 / hostZoom) : ''
+    }
+    compensate()
+    // 缩放变化会改变视口尺寸并触发 window resize；挂载期间监听以动态重算
+    window.addEventListener('resize', compensate)
+    return () => window.removeEventListener('resize', compensate)
+  }, [])
+
   return (
     <DialogPortal data-slot="dialog-portal">
       <DialogOverlay />
       <DialogPrimitive.Content
+        ref={contentRef}
         data-slot="dialog-content"
         className={cn(
           "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 sm:max-w-lg",

@@ -373,7 +373,8 @@ export default class I18nLLMGeneric extends BaseSetting {
         const prompts = [
             { id: 'llmRegexPrompt', name: t('Settings.Ai.RegexPromptTitle'), desc: t('Settings.Ai.RegexPromptDesc'), placeholder: t('Settings.Ai.RegexPromptPlaceholder') },
             { id: 'llmAstPrompt', name: t('Settings.Ai.AstPromptTitle'), desc: t('Settings.Ai.AstPromptDesc'), placeholder: t('Settings.Ai.AstPromptPlaceholder') },
-            { id: 'llmThemePrompt', name: t('Settings.Ai.ThemePromptTitle'), desc: t('Settings.Ai.ThemePromptDesc'), placeholder: t('Settings.Ai.ThemePromptPlaceholder') }
+            { id: 'llmThemePrompt', name: t('Settings.Ai.ThemePromptTitle'), desc: t('Settings.Ai.ThemePromptDesc'), placeholder: t('Settings.Ai.ThemePromptPlaceholder') },
+            { id: 'llmJudgePrompt', name: t('Settings.Ai.JudgePromptTitle', 'AI 判定提示词'), desc: t('Settings.Ai.JudgePromptDesc', 'AI 判定条目是否需要翻译时使用的提示词，仅影响「AI 判定选中项」；判定请求会附带目标串前后的源码片段'), placeholder: t('Settings.Ai.JudgePromptPlaceholder', '留空则使用内置模板') }
         ];
 
         prompts.forEach(p => {

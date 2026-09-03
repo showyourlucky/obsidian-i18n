@@ -3,6 +3,8 @@ import { requestUrl } from "obsidian";
 import OpenAI from "openai";
 import { normalizeOpenAIUrl } from "../utils/ai/url-helper";
 import { RegexItem, AstItem } from "../views/plugin_editor/types";
+import { JudgeItem } from "./provider-types";
+import { AiVerdict } from "../types";
 import { ThemeTranslationItem } from "../views/theme_editor/types";
 import { useGlobalStoreInstance } from "~/utils";
 import { BaseProvider } from "./base-provider";
@@ -131,7 +133,7 @@ export class OpenAITranslationService extends BaseProvider {
     /**
      * 统一的 OpenAI 调用逻辑
      */
-    private async callOpenAI(items: any[], systemPrompt: string, signal?: AbortSignal, maxRetries = 2): Promise<Array<{ i: number; t: string }>> {
+    private async callOpenAI(items: any[], systemPrompt: string, signal?: AbortSignal, maxRetries = 2, schemaKind: 'translate' | 'judge' = 'translate', parseFn?: (content: string) => any[]): Promise<any[]> {
         const settings = useGlobalStoreInstance.getState().i18n.settings;
         const messages: ChatMessage[] = [
             { role: "system", content: systemPrompt },
@@ -163,29 +165,55 @@ export class OpenAITranslationService extends BaseProvider {
                 };
 
                 // 根据设定的格式注入对应 response_format
-                if (settings.llmResponseFormat === 'json_object') {
-                    requestParams.response_format = { type: 'json_object' };
-                } else if (settings.llmResponseFormat === 'json_schema') {
+                // judge 模式结构固定，强制使用 json_schema strict：
+                // 避免用户设为 json_object（顶层必须是对象）与提示词「返回 JSON 数组」冲突导致解析失败
+                const forceSchema = schemaKind === 'judge';
+                if (settings.llmResponseFormat === 'json_schema' || forceSchema) {
+                    const schema = schemaKind === 'judge'
+                        ? {
+                            type: "object",
+                            properties: {
+                                items: {
+                                    type: "array",
+                                    items: {
+                                        type: "object",
+                                        properties: {
+                                            i: { type: "number" },
+                                            verdict: { type: "string", enum: ["translatable", "untranslatable", "unjudged"] },
+                                            // strict 模式要求 properties 中每个键都必须列入 required，
+                                            // 可选语义用可空联合类型表达，否则 API 直接返回 400
+                                            reason: { type: ["string", "null"] },
+                                            confidence: { type: ["number", "null"] }
+                                        },
+                                        required: ["i", "verdict", "reason", "confidence"],
+                                        additionalProperties: false
+                                    }
+                                }
+                            },
+                            required: ["items"],
+                            additionalProperties: false
+                        }
+                        : {
+                            type: "object",
+                            properties: {
+                                items: {
+                                    type: "array",
+                                    items: {
+                                        type: "object",
+                                        properties: { i: { type: "number" }, t: { type: "string" } },
+                                        required: ["i", "t"],
+                                        additionalProperties: false
+                                    }
+                                }
+                            },
+                            required: ["items"],
+                            additionalProperties: false
+                        };
                     requestParams.response_format = {
                         type: 'json_schema',
                         json_schema: {
-                            name: "translation_result",
-                            schema: {
-                                type: "object",
-                                properties: {
-                                    items: {
-                                        type: "array",
-                                        items: {
-                                            type: "object",
-                                            properties: { i: { type: "number" }, t: { type: "string" } },
-                                            required: ["i", "t"],
-                                            additionalProperties: false
-                                        }
-                                    }
-                                },
-                                required: ["items"],
-                                additionalProperties: false
-                            },
+                            name: schemaKind === 'judge' ? "judge_result" : "translation_result",
+                            schema,
                             strict: true
                         }
                     };
@@ -195,7 +223,7 @@ export class OpenAITranslationService extends BaseProvider {
                 const completion = await openai.chat.completions.create(requestParams, { signal: timeoutController.signal });
 
                 const assistantContent = completion.choices[0].message.content;
-                return this.parseResponseContent(assistantContent || '');
+                return parseFn ? parseFn(assistantContent || '') : this.parseResponseContent(assistantContent || '');
             } catch (error: any) {
                 // 检查是否是因为超时导致的取消
                 const isTimeout = error.name === 'AbortError' && !signal?.aborted;
@@ -205,7 +233,13 @@ export class OpenAITranslationService extends BaseProvider {
                     throw new Error('翻译任务已取消');
                 }
 
-                lastError = isTimeout ? new Error(`请求超时 (${timeoutMs}ms)`) : error;
+                // Judge 模式超时不重试：超时多因单批过大或模型过慢，
+                // 重试只会再等满一个完整超时周期且大概率再超时，直接上抛按批次失败处理
+                if (isTimeout && schemaKind === 'judge') {
+                    throw new Error(this.buildTimeoutMessage(timeoutMs));
+                }
+
+                lastError = isTimeout ? new Error(this.buildTimeoutMessage(timeoutMs)) : error;
                 attempt++;
 
                 if (attempt <= maxRetries) {
@@ -288,6 +322,25 @@ export class OpenAITranslationService extends BaseProvider {
             clearTimeout(timeoutId);
             if (signal) signal.removeEventListener('abort', abortHandler);
         }
+    }
+
+    public supportsJudge(): boolean {
+        return true;
+    }
+
+    /** Judge API — AI 判定 AST 条目是否需要翻译 */
+    protected async callJudgeAPI(items: JudgeItem[], signal?: AbortSignal): Promise<JudgeItem[]> {
+        const systemPrompt = this.getJudgeSystemPrompt();
+        const simplified = items.map(it => ({
+            i: it.id, s: it.source,
+            y: it.type ?? null, n: it.name ?? null,
+            k: it.propKey ?? null, a: it.argIndex ?? null, c: it.snippet ?? null,
+        }));
+        const verdicts = await this.callOpenAI(simplified, systemPrompt, signal, 2, 'judge', (c) => this.parseJudgeResponse(c)) as Array<{ i: number; verdict: AiVerdict; reason?: string; confidence?: number }>;
+        return items.map(it => {
+            const v = verdicts.find(x => x.i === it.id);
+            return { ...it, verdict: v?.verdict ?? 'unjudged', reason: v?.reason, confidence: v?.confidence };
+        });
     }
 }
 

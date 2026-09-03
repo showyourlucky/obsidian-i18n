@@ -21,7 +21,11 @@ export const AST_DEFAULT_CONFIG = {
         'setHint', 'setWarning', 'setText', 'appendText', 'createEl', 'createDiv',
         'createSpan', 'addCommand', 'insertText', 'replaceRange', 'replaceSelection',
         'log', 'error', 'warn', 'info', 'alert', 'confirm', 'prompt',
-        'renderMarkdown', 'setLabel', 'setConfirmText', 'setCancelText'
+        'renderMarkdown', 'setLabel', 'setConfirmText', 'setCancelText',
+        // 虚拟 DOM / 框架创建函数：标签名与位置参数由 DOM_CREATE_SHORTHAND_ARGS 排除，不误提
+        'createElement', 'cloneElement', 'createElementNS',
+        'jsx', 'jsxs', 'jsxDEV', 'h',
+        'createElementVNode', 'createBaseVNode', 'createElementBlock', 'createBlock', 'createTextVNode'
     ],
     // 对象键名白名单
     keys: [
@@ -45,7 +49,7 @@ export const AST_DEFAULT_RULES = {
         /^#([0-9a-f]{3}|[0-9a-f]{6})$/i,               // 十六进制颜色
         /^[a-z0-9]+-[a-z0-9-]+$/,                      // 包含连字符的 kebab-case (通常是 ID)
         /^[a-z]+[A-Z][a-zA-Z0-9]*$/,                   // camelCase (变量名)
-        /^[A-Z_][A-Z0-9_]{3,}$/,                       // 长大写常量 (屏蔽如 SETTINGS_MODE，但保留 OK)
+        /^[A-Z_][A-Z0-9]*(_[A-Z0-9]+)+$/,             // SNAKE_CASE 常量 (屏蔽 SETTINGS_MODE/APP_STATE，但放行 REMOVE/SAVE/DELETE 等自然语言全大写词)
         /^(px|em|rem|vh|vw|auto)$/i,                   // CSS 单位
         /^rgba?\(/i,                                   // RGBA 颜色
         /^\./,                                         // 以点开头 (选择器)
@@ -160,7 +164,37 @@ export const DOM_CREATE_SHORTHAND_ARGS: Record<string, number[]> = {
     createSvg: [0, 1],
     createDiv: [0],     // cls 简写
     createSpan: [0],
+    // React classic runtime
+    createElement: [0],        // 0 = 标签名 ("div")
+    cloneElement: [0],         // 0 = 元素引用
+    createElementNS: [0, 1],   // 0 = 命名空间, 1 = 标签名
+    // React 17+ automatic runtime (minified 后形如 (0,r.jsx)(...))
+    jsx: [0],                  // 0 = 标签名
+    jsxs: [0],                 // 0 = 标签名
+    jsxDEV: [0],               // 0 = 标签名
+    // Preact / hyperscript
+    h: [0],                    // 0 = 标签名
+    // Vue 3 编译产物
+    createElementVNode: [0],   // 0 = 标签名
+    createBaseVNode: [0],      // 0 = 标签名
+    createElementBlock: [0],   // 0 = 标签名
+    createBlock: [0],          // 0 = 标签名
 };
+
+/**
+ * 框架虚拟 DOM 创建函数集合。
+ * 这些名字 (尤其 `h`/`jsx`) 过于通用，用户自定义同名函数很常见，
+ * 故仅当调用形态符合框架签名 (第 1 实参为 props 对象或 null) 时才按框架调用处理，
+ * 否则跳过提取，避免误提取用户代码。
+ * 注：createElementNS 第 1 参是命名空间字符串、createTextVNode 无 props 参数，均不在此列。
+ */
+export const FRAMEWORK_CREATE_FUNCS: ReadonlySet<string> = new Set([
+    'createElement', 'cloneElement',
+    'jsx', 'jsxs', 'jsxDEV',
+    'h',
+    'createElementVNode', 'createBaseVNode',
+    'createElementBlock', 'createBlock',
+]);
 
 /**
  * 结构性对象键：其值是类名 / 选择器 / 标识符 / 机器取值，永远不是 UI 文案

@@ -12,7 +12,8 @@ export default {
         Update: "更新",
         Clear: "清除",
         Delete: "删除",
-        StopTranslate: "停止翻译"
+        StopTranslate: "停止翻译",
+        StopJudge: "停止判定"
     },
     Status: {
         Success: "成功",

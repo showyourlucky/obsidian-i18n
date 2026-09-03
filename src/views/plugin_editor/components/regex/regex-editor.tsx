@@ -4,6 +4,7 @@ import { Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } 
 import { useTranslation } from 'react-i18next';
 
 import { useRegexStore } from '../../store';
+import { EDITOR_EVENTS } from '../../events';
 import { RegexTable } from '../..';
 
 interface Props {
@@ -56,8 +57,8 @@ const RegexEditor: React.FC<Props> = () => {
                 setEditingId(e.detail.id);
             }
         };
-        window.addEventListener('i18n-jump-error', handleJump as EventListener);
-        return () => window.removeEventListener('i18n-jump-error', handleJump as EventListener);
+        window.addEventListener(EDITOR_EVENTS.JumpError, handleJump as EventListener);
+        return () => window.removeEventListener(EDITOR_EVENTS.JumpError, handleJump as EventListener);
     }, [setSearchQuery]);
 
     // 过滤后的条目（使用 deferred 值）

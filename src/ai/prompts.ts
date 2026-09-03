@@ -243,3 +243,65 @@ Your job is to fix the translation so it is syntactically valid while preserving
 export function generateFixSystemPrompt(targetLanguage: string): string {
     return DEFAULT_FIX_PROMPT_TEMPLATE.replace(/\{\{targetLanguage\}\}/g, targetLanguage);
 }
+
+
+// =========================================================================================
+//                                   Judge (AI 判定是否需要翻译) 提示词
+// =========================================================================================
+
+export const DEFAULT_JUDGE_PROMPT_TEMPLATE = `
+# Role & Context
+You are an expert Software i18n Auditor. Your task is to decide whether each extracted string from a plugin's (often minified/bundled) JavaScript should be translated into the target language, or skipped because it is NOT user-visible text.
+
+# Input
+Array of objects:
+- i: ID
+- s: the source string
+- y: node type (e.g. CallExpression, ObjectProperty, VariableDeclarator)
+- n: function/key name (e.g. setTitle, createElement, placeholder)
+- k: object property key (e.g. placeholder, className, onClick) — may be absent
+- a: argument index in the call (e.g. 0 = tag name) — may be absent
+- c: short surrounding source snippet — may be absent
+
+# Output (CRITICAL)
+Return ONLY a JSON array. Each object has exactly: { "i": number, "verdict": "translatable" | "untranslatable", "reason": string, "confidence": number }.
+- "translatable": visible UI text a user would read (labels, buttons, placeholders, titles, descriptions, messages, tooltips, children text).
+- "untranslatable": NOT user-visible. Includes HTML tag names (div, span, button...), CSS classes, event/attribute names (onClick, onChange, className, id, ref, key, href, src, type, value, name), code identifiers, variable names, keys, format specifiers, URLs, file paths, selectors, machine state values.
+- reason: one short sentence in {{targetLanguage}} explaining the decision (mention the decisive signal: k, a, c, or wording).
+- confidence: 0..1. If below 0.6, you MUST output "untranslatable" (when unsure, prefer skipping).
+- Language rule (CRITICAL): "verdict" MUST stay the exact English enum value ("translatable" / "untranslatable") — NEVER localize it, or the caller cannot parse it. Only "reason" is written in {{targetLanguage}}, because it is shown to the end user.
+
+# Heuristics
+1. If k (key) is className/style/onClick/onChange/id/ref/key/value/name/href/src/type → untranslatable.
+2. If a (arg index) is 0 for createElement/jsx/h and the string is a tag name → untranslatable.
+3. If the string looks like a code identifier (camelCase/snake_case, no spaces) and is not clearly a sentence → untranslatable.
+4. Natural-language phrases, sentences, or words a user reads → translatable.
+5. Use c (surrounding snippet) as the strongest evidence when present — it reveals the actual call site:
+   - string sits in a text position (children, placeholder, title, label, text, aria-label, Notice/toast/set* call) → translatable.
+   - string sits inside a class/id/selector/attribute map, a comparison, a switch case, or an event registration → untranslatable.
+   - Example: c shows ...,children:"Retry"... → translatable; c shows ...,{cls:"Retry"}... → untranslatable.
+   - When k/a are absent or ambiguous, decide primarily from c.
+
+# Target Language: {{targetLanguage}}
+# Answer Rule
+- Write "reason" in {{targetLanguage}} so the end user can read it.
+- Keep "verdict" as the English enum — it is machine-parsed; translating it breaks the system.
+
+# Example (reason is shown in {{targetLanguage}}; verdict stays English)
+[Input]
+[{"i":1,"s":"Set up your own providers","y":"CallExpression","n":"createElement","k":"children"},
+ {"i":2,"s":"div","y":"CallExpression","n":"createElement","a":0},
+ {"i":3,"s":"tw-max-w-xl","y":"ObjectProperty","k":"className"}]
+
+[Output]
+[{"i":1,"verdict":"translatable","reason":"children 文本是用户可见的界面文案","confidence":0.97},
+ {"i":2,"verdict":"untranslatable","reason":"实参 0 是 HTML 标签名","confidence":0.99},
+ {"i":3,"verdict":"untranslatable","reason":"className 是 CSS 类名，不是文案","confidence":0.99}]
+`.trim();
+
+/**
+ * 生成 Judge (AI 判定是否需要翻译) 模式提示词
+ */
+export function generateJudgeSystemPrompt(template: string, targetLanguage: string): string {
+    return (template || DEFAULT_JUDGE_PROMPT_TEMPLATE).replace(/\{\{targetLanguage\}\}/g, targetLanguage);
+}

@@ -9,16 +9,19 @@
  */
 
 import { useGlobalStoreInstance } from '~/utils';
-import { ITranslationProvider, OnRegexBatchComplete, OnAstBatchComplete, OnThemeBatchComplete } from './provider-types';
+import { ITranslationProvider, OnRegexBatchComplete, OnAstBatchComplete, OnThemeBatchComplete, JudgeItem, OnJudgeBatchComplete } from './provider-types';
 import { RegexItem, AstItem } from '../views/plugin_editor/types';
+import { AiVerdict } from '../types';
 import { ThemeTranslationItem } from '../views/theme_editor/types';
 import { parseTranslationResponse } from '../utils/ai/response-parser';
+import { parseJudgeResponse as parseJudgeResponseImpl } from '../utils/ai/judge-parser';
 import { LLM_PROVIDERS } from './constants';
 import { estimateBatchTokens, estimateCost } from '../utils/ai/token-estimator';
 import {
     DEFAULT_REGEX_PROMPT_TEMPLATE, generateRegexSystemPrompt,
     DEFAULT_AST_PROMPT_TEMPLATE, generateAstSystemPrompt,
     DEFAULT_THEME_PROMPT_TEMPLATE, generateThemeSystemPrompt,
+    DEFAULT_JUDGE_PROMPT_TEMPLATE, generateJudgeSystemPrompt,
     generateFixSystemPrompt,
 } from './prompts';
 
@@ -34,6 +37,18 @@ export abstract class BaseProvider implements ITranslationProvider {
 
     /** 子类实现：调用具体 API 翻译一个批次的 Theme 项 */
     protected abstract callThemeTranslationAPI(items: ThemeTranslationItem[], signal?: AbortSignal): Promise<ThemeTranslationItem[]>;
+
+    /** 子类可覆写：调用具体 API 判定一个批次的条目是否需要翻译（默认不支持） */
+    protected async callJudgeAPI(items: JudgeItem[], signal?: AbortSignal): Promise<JudgeItem[]> {
+        // 与 callFixAPI 相同的演进风格：默认抛错、子类按需覆写，
+        // 避免以 abstract 强制扩张基类造成破坏性接口变更
+        throw new Error('AI 判定 is not supported for this provider');
+    }
+
+    /** 该 Provider 是否支持 AI 判定能力（子类覆写以启用，供 UI 隐藏入口） */
+    public supportsJudge(): boolean {
+        return false;
+    }
 
     // ======================== 公共接口 ========================
 
@@ -85,7 +100,18 @@ export abstract class BaseProvider implements ITranslationProvider {
         );
     }
 
-    public estimateTokens(items: any[], type: 'regex' | 'ast' | 'theme'): { tokens: number; cost: number } {
+    public async judgeTranslatable(items: JudgeItem[], onBatchComplete: OnJudgeBatchComplete, signal?: AbortSignal, maxBatches?: number): Promise<JudgeItem[]> {
+        return this.executeParallelBatches(
+            items,
+            (batch, sig) => this.callJudgeAPI(batch, sig),
+            onBatchComplete,
+            signal,
+            maxBatches,
+            'AI判定'
+        );
+    }
+
+    public estimateTokens(items: any[], type: 'regex' | 'ast' | 'theme' | 'judge'): { tokens: number; cost: number } {
         const settings = useGlobalStoreInstance.getState().i18n.settings;
         let systemPrompt = '';
 
@@ -101,6 +127,9 @@ export abstract class BaseProvider implements ITranslationProvider {
         } else if (type === 'theme') {
             const template = settings.llmThemePrompt || DEFAULT_THEME_PROMPT_TEMPLATE;
             systemPrompt = generateThemeSystemPrompt(template, language, style);
+        } else if (type === 'judge') {
+            const template = settings.llmJudgePrompt || DEFAULT_JUDGE_PROMPT_TEMPLATE;
+            systemPrompt = generateJudgeSystemPrompt(template, language);
         }
 
         const tokens = estimateBatchTokens(items, systemPrompt);
@@ -142,6 +171,16 @@ export abstract class BaseProvider implements ITranslationProvider {
         return useGlobalStoreInstance.getState().i18n.settings.llmTimeout || 60000;
     }
 
+    /**
+     * 构造超时错误消息 (附可操作建议)
+     *
+     * 超时多因单批条目过多，或使用了推理模型 (思维链使生成时间成倍拉长)。
+     * 只报「请求超时」用户无从下手，故直接在消息里给出三条处置方向。
+     */
+    protected buildTimeoutMessage(timeoutMs: number): string {
+        return `请求超时 (${timeoutMs}ms) — 建议调大「超时」设置、减小「每批数量」，或改用非推理模型`;
+    }
+
     // ======================== 内部工具方法 ========================
 
     /** 验证输入数据 */
@@ -163,12 +202,13 @@ export abstract class BaseProvider implements ITranslationProvider {
     }
 
     /** 通用的并行批处理执行器 */
-    protected async executeParallelBatches<T>(
+    protected async executeParallelBatches<T extends object>(
         items: T[],
         callApi: (batch: T[], signal?: AbortSignal) => Promise<T[]>,
         onBatchComplete: (batchResult: T[], batchIndex: number, totalBatches: number) => void | Promise<void>,
         signal?: AbortSignal,
-        maxBatches?: number
+        maxBatches?: number,
+        opLabel = 'AI翻译'
     ): Promise<T[]> {
         this.validateInput(items);
         const allBatches = this.splitIntoBatches(items);
@@ -180,6 +220,7 @@ export abstract class BaseProvider implements ITranslationProvider {
         const limit = this.getConcurrencyLimit();
         let currentBatchIndex = 0;
         let completedBatchesCount = 0;
+        let failureNotified = false;
 
         const runBatch = async () => {
             while (currentBatchIndex < totalBatches) {
@@ -196,10 +237,22 @@ export abstract class BaseProvider implements ITranslationProvider {
                 } catch (error) {
                     if ((error as Error).message !== '翻译任务已取消') {
                         console.error(`Batch ${index + 1} failed:`, error);
-                        useGlobalStoreInstance.getState().i18n.notice.error(`AI翻译批次 ${index + 1} 失败: ${(error as Error).message}`);
+                        // 并发多批失败时只提示一次，避免弹窗刷屏（其余失败信息已记录到控制台）
+                        if (!failureNotified) {
+                            failureNotified = true;
+                            useGlobalStoreInstance.getState().i18n.notice.error(`${opLabel}批次 ${index + 1} 失败: ${(error as Error).message}`);
+                        }
                     }
                     completedBatchesCount++;
-                    resultsBuffer[index] = batch.map(item => ({ ...item, target: (item as any).source || '' })) as unknown as T[];
+                    // 兜底：仅对含 target 字段的翻译项回填 source，避免污染 JudgeItem 等无 target 语义的条目
+                    resultsBuffer[index] = batch.map(item =>
+                        'target' in item ? { ...item, target: (item as any).source || '' } : item
+                    ) as unknown as T[];
+                    // 失败批次也回调一次（空结果）：让上层进度推进到 100%，与成功批次的进度语义一致；
+                    // 空 batchResult 不会写回任何条目
+                    try {
+                        await onBatchComplete([] as unknown as T[], completedBatchesCount, totalBatches);
+                    } catch { /* 回调异常不应中断其他批次执行 */ }
                 }
             }
         };
@@ -282,6 +335,24 @@ export abstract class BaseProvider implements ITranslationProvider {
     protected getFixSystemPrompt(): string {
         const settings = useGlobalStoreInstance.getState().i18n.settings;
         return generateFixSystemPrompt(settings.llmLanguage);
+    }
+
+    /** 生成 Judge (AI 判定是否需要翻译) System Prompt */
+    protected getJudgeSystemPrompt(): string {
+        const settings = useGlobalStoreInstance.getState().i18n.settings;
+        const template = settings.llmJudgePrompt || DEFAULT_JUDGE_PROMPT_TEMPLATE;
+        return generateJudgeSystemPrompt(template, settings.llmLanguage);
+    }
+
+    /**
+     * 解析 LLM 返回的判定结果 (JSON 数组，含 i/verdict/reason/confidence)
+     *
+     * 解析失败或结果为空时抛错（而非返回空数组），交由 Provider 的重试机制接管；
+     * 静默返回空会导致该批次「看似成功、实则全部 unjudged」。
+     */
+    protected parseJudgeResponse(content: string): Array<{ i: number; verdict: AiVerdict; reason?: string; confidence?: number }> {
+        // 解析逻辑已抽离到纯函数模块 utils/ai/judge-parser，此处仅作委托，保持 3 个 Provider 的调用方式不变
+        return parseJudgeResponseImpl(content);
     }
 
     /**

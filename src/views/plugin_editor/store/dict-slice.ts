@@ -1,6 +1,26 @@
 import { StateCreator } from 'zustand';
 import { RegexStore, DictSlice } from '../types';
 
+/**
+ * AstItem → 持久化字典条目的序列化字段列表。
+ * 集中定义避免多处复制导致新增字段漏同步。
+ */
+const toAstDictItem = (item: RegexStore['astItems'][number]) => ({
+    type: item.type,
+    name: item.name,
+    source: item.source,
+    target: item.target,
+    start: item.start,
+    end: item.end,
+    line: item.line,
+    col: item.col,
+    propKey: item.propKey,
+    argIndex: item.argIndex,
+    aiVerdict: item.aiVerdict,
+    aiReason: item.aiReason,
+    aiConfidence: item.aiConfidence,
+});
+
 export const createDictSlice: StateCreator<
     RegexStore,
     [],
@@ -14,7 +34,16 @@ export const createDictSlice: StateCreator<
 
     setDictData: (data) => set({ dictData: data }),
     setSearchQuery: (query) => set({ searchQuery: query }),
-    setSourceCache: (file, code) => set(state => ({ sourceCache: { ...state.sourceCache, [file]: code } })),
+    setSourceCache: (file, code, fingerprint) => set(state => ({
+        sourceCache: {
+            ...state.sourceCache,
+            [file]: {
+                code,
+                mtimeMs: fingerprint?.mtimeMs ?? null,
+                size: fingerprint?.size ?? 0
+            }
+        }
+    })),
 
     setCurrentFile: (file) => {
         set((state) => {
@@ -24,20 +53,14 @@ export const createDictSlice: StateCreator<
             // 1. 保存当前进度到原文件
             if (currentFile && newData[currentFile]) {
                 newData[currentFile] = {
-                    ast: astItems.map(item => ({ type: item.type, name: item.name, source: item.source, target: item.target })),
+                    ast: astItems.map(toAstDictItem),
                     regex: regexItems.map(item => ({ source: item.source, target: item.target }))
                 };
             }
 
             // 2. 获取新文件内容
             const nextFileData = newData[file] || { ast: [], regex: [] };
-            const nextAstItems = nextFileData.ast.map((item, index) => ({
-                id: index,
-                type: item.type,
-                name: item.name,
-                source: item.source,
-                target: item.target,
-            }));
+            const nextAstItems = nextFileData.ast.map((item, index) => ({ ...item, id: index }));
             const nextRegexItems = nextFileData.regex.map((item, index) => ({
                 id: index,
                 source: item.source,
@@ -76,7 +99,7 @@ export const createDictSlice: StateCreator<
             // 1. 如果当前还有正在编辑的项目，先将其保存到 dictData 中对应的位置 (除了要删除的那个)
             if (currentFile && newData[currentFile] && currentFile !== file) {
                 newData[currentFile] = {
-                    ast: astItems.map(item => ({ type: item.type, name: item.name, source: item.source, target: item.target })),
+                    ast: astItems.map(toAstDictItem),
                     regex: regexItems.map(item => ({ source: item.source, target: item.target }))
                 };
             }
@@ -101,13 +124,7 @@ export const createDictSlice: StateCreator<
                     nextState = {
                         ...nextState,
                         currentFile: nextFile,
-                        astItems: nextFileData.ast.map((item, index) => ({
-                            id: index,
-                            type: item.type,
-                            name: item.name,
-                            source: item.source,
-                            target: item.target,
-                        })),
+                        astItems: nextFileData.ast.map((item, index) => ({ ...item, id: index })),
                         regexItems: nextFileData.regex.map((item, index) => ({
                             id: index,
                             source: item.source,
@@ -131,7 +148,7 @@ export const createDictSlice: StateCreator<
         set((state) => {
             const newData = { ...state.dictData };
             newData[file] = {
-                ast: newAstItems.map(item => ({ type: item.type, name: item.name, source: item.source, target: item.target })),
+                ast: newAstItems.map(toAstDictItem),
                 regex: newRegexItems.map(item => ({ source: item.source, target: item.target }))
             };
             return { dictData: newData };

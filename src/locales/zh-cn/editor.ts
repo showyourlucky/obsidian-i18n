@@ -53,10 +53,22 @@ export default {
         PunctuationCheck: "标点检查",
         ExpectedConsumption: "预期消耗",
         LineNumber: "行 {{line}}",
-        SelectedCount: "已选 {{count}} 项"
+        SelectedCount: "已选 {{count}} 项",
+        AiFilter: "AI 判定",
+        SourceLine: "行 {{line}}",
+        SourceLineDrift: "记录行 L{{line}}（源码已变更，按邻近位置定位）",
+        SourceAmbiguous: "源码中该文本共 {{total}} 处，当前位置可能不准",
+        SourceOffsetRange: "偏移 {{start}}–{{end}}",
+        SourceOffset: "源码上下文",
+        SourceLoading: "正在读取源码…",
+        SourceUnavailable: "无可用源码（未找到原始代码，仅显示条目文本）"
     },
     Filters: {
-        NameAll: "全部名称"
+        NameAll: "全部名称",
+        TransAll: "全部翻译",
+        AiAll: "全部判定",
+        WordOnly: "仅单词",
+        WordOnlyTip: "仅显示无空格的单个单词（多为难以判断是否该翻的短文案）"
     },
     Actions: {
         BatchTranslate: "开始批量翻译 ({{count}})",
@@ -86,7 +98,10 @@ export default {
         ContextAwareTip: "附加源码上下文以提升翻译准确度",
         BatchDelete: "批量删除",
         BatchRestore: "批量还原",
-        ClearSelection: "取消选择"
+        ClearSelection: "取消选择",
+        JudgeSelected: "AI 判定选中项",
+        JudgeSuccess: "已判定 {{count}} 项",
+        OpenSource: "在源码中查看"
     },
     Stats: {
         Title: "条目统计",
@@ -129,7 +144,14 @@ export default {
         ColumnName: "名称",
         ColumnSource: "原文",
         ColumnTarget: "译文",
+        ColumnLocate: "定位",
+        ColumnVerdict: "AI 判定",
         ColumnActions: "操作"
+    },
+    Verdict: {
+        Unjudged: "待判断",
+        Translatable: "该翻",
+        Untranslatable: "不该翻"
     },
     Status: {
         ProcessingBatch: "正在翻译第 {{current}}/{{total}} 批...",
@@ -158,7 +180,9 @@ export default {
         DiagnosisSuccess: "语法诊断通过",
         ConfirmDeleteUnused: "确定删除这些冗余项吗？该操作不可撤销。",
         ConfirmBatchDelete: "确认删除选中的 {{count}} 项吗？该操作不可撤销。",
-        AiFixSuccess: "AI 修复成功"
+        AiFixSuccess: "AI 修复成功",
+        JudgeAborted: "文件已切换，AI 判定已中止",
+        JudgePartialFail: "已判定 {{success}} 项，{{failed}} 项未出结论（多为请求超时或返回格式异常，建议调大超时、减小每批数量或更换模型）"
     },
     Errors: {
         FailExists: "新增失败\n译文中已存在此内容",

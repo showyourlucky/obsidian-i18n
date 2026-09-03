@@ -10,6 +10,8 @@
 
 import { requestUrl } from "obsidian";
 import { RegexItem, AstItem } from "../views/plugin_editor/types";
+import { JudgeItem } from "./provider-types";
+import { AiVerdict } from "../types";
 import { ThemeTranslationItem } from "../views/theme_editor/types";
 import { useGlobalStoreInstance } from "~/utils";
 import { BaseProvider } from "./base-provider";
@@ -41,7 +43,7 @@ export class OllamaTranslationService extends BaseProvider {
     /**
      * 调用 Ollama 的 OpenAI 兼容 API
      */
-    private async callOllama(items: any[], systemPrompt: string, signal?: AbortSignal, maxRetries = 2): Promise<any[]> {
+    private async callOllama(items: any[], systemPrompt: string, signal?: AbortSignal, maxRetries = 2, parseFn?: (content: string) => any[]): Promise<any[]> {
         const baseUrl = this.getBaseUrl();
         const model = this.getModelName();
         const url = `${baseUrl}/v1/chat/completions`;
@@ -79,7 +81,7 @@ export class OllamaTranslationService extends BaseProvider {
 
                 // 手动实现超时
                 const timeoutPromise = new Promise<never>((_, reject) => {
-                    timeoutId.id = setTimeout(() => reject(new Error(`请求超时 (${effectiveTimeout}ms)`)), effectiveTimeout);
+                    timeoutId.id = setTimeout(() => reject(new Error(this.buildTimeoutMessage(effectiveTimeout))), effectiveTimeout);
                 });
 
                 const response = await Promise.race([responsePromise, timeoutPromise]);
@@ -94,10 +96,15 @@ export class OllamaTranslationService extends BaseProvider {
 
                 if (!content) throw new Error('Ollama 返回内容为空');
 
-                return this.parseResponseContent(content);
+                return (parseFn || this.parseResponseContent)(content);
             } catch (error: any) {
                 const isManualAbort = signal?.aborted || error.message === '翻译任务已取消';
                 if (isManualAbort) throw new Error('翻译任务已取消');
+
+                // Judge 模式 (parseFn 存在) 超时不重试：超时错误 message 由 buildTimeoutMessage 生成
+                if (parseFn && typeof error.message === 'string' && error.message.includes('请求超时')) {
+                    throw error;
+                }
 
                 lastError = error;
                 attempt++;
@@ -225,5 +232,20 @@ export class OllamaTranslationService extends BaseProvider {
         if (cleaned.startsWith("'") && cleaned.endsWith("'")) cleaned = cleaned.slice(1, -1);
 
         return cleaned;
+    }
+
+    public supportsJudge(): boolean {
+        return true;
+    }
+
+    /** Judge API — AI 判定 AST 条目是否需要翻译 (Ollama 实现) */
+    protected async callJudgeAPI(items: JudgeItem[], signal?: AbortSignal): Promise<JudgeItem[]> {
+        const systemPrompt = this.getJudgeSystemPrompt();
+        const simplified = items.map(it => ({ i: it.id, s: it.source, y: it.type ?? null, n: it.name ?? null, k: it.propKey ?? null, a: it.argIndex ?? null, c: it.snippet ?? null }));
+        const verdicts = await this.callOllama(simplified, systemPrompt, signal, 2, (c) => this.parseJudgeResponse(c)) as Array<{ i: number; verdict: AiVerdict; reason?: string; confidence?: number }>;
+        return items.map(it => {
+            const v = verdicts.find(x => x.i === it.id);
+            return { ...it, verdict: v?.verdict ?? 'unjudged', reason: v?.reason, confidence: v?.confidence };
+        });
     }
 }

@@ -17,7 +17,7 @@ import { I18nSettings } from '../../settings/data';
 import {
     AST_DEFAULT_CONFIG, AST_DEFAULT_RULES,
     HARDCODED_WORDS, LOGIC_BINARY_OPERATORS, LOGIC_STRING_METHODS, EVENT_LISTENER_METHODS, DOM_EVENT_NAMES,
-    DOM_CREATE_SHORTHAND_ARGS, STRUCTURAL_KEYS, DOM_CREATE_STRUCTURAL_KEYS
+    DOM_CREATE_SHORTHAND_ARGS, STRUCTURAL_KEYS, DOM_CREATE_STRUCTURAL_KEYS, FRAMEWORK_CREATE_FUNCS
 } from './config';
 
 /**
@@ -125,11 +125,19 @@ export class AstTranslator {
     public extract(ast: t.Node): PluginTranslationV1Ast[] {
         const results: PluginTranslationV1Ast[] = [];
 
-        this.traverseWhitelist(ast, (type, name, valueNode) => {
+        this.traverseWhitelist(ast, (type, name, valueNode, extra) => {
             const source = this.extractSource(valueNode);
             // 双重校验：上下文白名单 (implicit) + 内容有效性 (explicit)
             if (source && this.isValidText(source)) {
-                results.push({ type, name, source, target: source });
+                results.push({
+                    type, name, source, target: source,
+                    start: valueNode.start ?? undefined,
+                    end: valueNode.end ?? undefined,
+                    line: valueNode.loc?.start.line ?? undefined,
+                    col: valueNode.loc?.start.column ?? undefined,
+                    propKey: extra?.propKey,
+                    argIndex: extra?.argIndex,
+                });
             }
         });
 
@@ -176,7 +184,7 @@ export class AstTranslator {
             // 尝试匹配
             let target = strictMap.get(this.getFingerprint({ type, name, source } as any));
             // 严格匹配失败时，仅当该字符串不参与程序逻辑才允许回退
-            if (!target && allowLoose && safe) {
+            if (!target && allowLoose && safe && this.isWhitelistedContext(type, name)) {
                 target = looseMap.get(source);
             }
 
@@ -221,7 +229,7 @@ export class AstTranslator {
             const fingerprint = this.getFingerprint({ type, name, source } as any);
             if (strictMap.has(fingerprint)) {
                 hitFingerprints.add(fingerprint);
-            } else if (allowLoose && safe && looseMap.has(source)) {
+            } else if (allowLoose && safe && this.isWhitelistedContext(type, name) && looseMap.has(source)) {
                 // 如果严格匹配失败但宽松匹配成功，记录下宽松匹配的标示
                 hitFingerprints.add(source);
             }
@@ -574,7 +582,22 @@ export class AstTranslator {
      * 白名单遍历器 (用于提取)
      * 只访问 settings 中明确列出的上下文
      */
-    private traverseWhitelist(ast: t.Node, callback: (type: string, name: string, valueNode: t.StringLiteral | t.TemplateLiteral) => void) {
+    private traverseWhitelist(
+        ast: t.Node,
+        callback: (
+            type: string,
+            name: string,
+            valueNode: t.StringLiteral | t.TemplateLiteral,
+            extra?: { propKey?: string; argIndex?: number }
+        ) => void
+    ) {
+        const isFrameworkCreateCall = (name: string, node: t.CallExpression | t.NewExpression): boolean => {
+            if (!FRAMEWORK_CREATE_FUNCS.has(name)) return true;
+            // 框架签名: fn(tag, props, ...children)，props 为对象或 null。
+            // 无 props 或 props 非对象/null 时视为用户自定义同名函数，跳过提取。
+            const props = node.arguments[1];
+            return !!props && (t.isObjectExpression(props) || t.isNullLiteral(props));
+        };
         traverse(ast, {
             // 1. 变量声明 (const title = "...")
             VariableDeclarator: (path) => {
@@ -597,29 +620,41 @@ export class AstTranslator {
                 const node = path.node;
                 const name = this.getObjKeyName(node.key);
                 if (name && this.config.keys.includes(name) && !this.isStructuralKey(name) && this.isStrNode(node.value)) {
-                    callback('ObjectProperty', name, node.value);
+                    callback('ObjectProperty', name, node.value, { propKey: name });
                 }
             },
             // 4. 函数调用 (Notice("..."))
             CallExpression: (path) => {
                 const node = path.node;
                 const name = this.getCallName(node.callee);
-                if (name && this.config.functions.includes(name)) {
+                if (name && this.config.functions.includes(name) && isFrameworkCreateCall(name, node)) {
                     const skipArgs = this.getShorthandSkipArgs(name);
                     node.arguments.forEach((arg, index) => {
                         // createEl("div", "cls-shorthand") 这类位置参数属于 DOM 结构，跳过
                         if (skipArgs.includes(index)) return;
                         if (this.isStrNode(arg)) {
-                            callback('CallExpression', name, arg);
+                            callback('CallExpression', name, arg, { argIndex: index });
                         } else if (t.isObjectExpression(arg)) {
                             // 深度提取：提取白名单函数参数对象中的所有字符串值 (排除结构性键)
                             arg.properties.forEach(prop => {
                                 if (t.isObjectProperty(prop)) {
                                     const propName = this.getObjKeyName(prop.key) || 'prop';
-                                    if (!this.isStructuralKey(propName, name) && this.isStrNode(prop.value)) {
-                                        callback('ObjectProperty', propName, prop.value);
+                                    if (!this.isStructuralKey(propName, name)) {
+                                        if (this.isStrNode(prop.value)) {
+                                            callback('ObjectProperty', propName, prop.value, { propKey: propName });
+                                        } else if (t.isArrayExpression(prop.value)) {
+                                            // children 数组 (如 { children: ["a", "b"] })
+                                            prop.value.elements.forEach(el => {
+                                                if (this.isStrNode(el)) callback('ObjectProperty', propName, el, { propKey: propName });
+                                            });
+                                        }
                                     }
                                 }
+                            });
+                        } else if (t.isArrayExpression(arg)) {
+                            // 顶层 children 数组 (如 jsx("div", null, "a", ["b"]))
+                            arg.elements.forEach(el => {
+                                if (this.isStrNode(el)) callback('CallExpression', name, el, { argIndex: index });
                             });
                         }
                     });
@@ -629,21 +664,31 @@ export class AstTranslator {
             NewExpression: (path) => {
                 const node = path.node;
                 const name = this.getCallName(node.callee);
-                if (name && this.config.functions.includes(name)) {
+                if (name && this.config.functions.includes(name) && isFrameworkCreateCall(name, node)) {
                     const skipArgs = this.getShorthandSkipArgs(name);
                     node.arguments.forEach((arg, index) => {
                         if (skipArgs.includes(index)) return;
                         if (this.isStrNode(arg)) {
-                            callback('NewExpression', name, arg);
+                            callback('NewExpression', name, arg, { argIndex: index });
                         } else if (t.isObjectExpression(arg)) {
                             // 深度提取
                             arg.properties.forEach(prop => {
                                 if (t.isObjectProperty(prop)) {
                                     const propName = this.getObjKeyName(prop.key) || 'prop';
-                                    if (!this.isStructuralKey(propName, name) && this.isStrNode(prop.value)) {
-                                        callback('ObjectProperty', propName, prop.value);
+                                    if (!this.isStructuralKey(propName, name)) {
+                                        if (this.isStrNode(prop.value)) {
+                                            callback('ObjectProperty', propName, prop.value, { propKey: propName });
+                                        } else if (t.isArrayExpression(prop.value)) {
+                                            prop.value.elements.forEach(el => {
+                                                if (this.isStrNode(el)) callback('ObjectProperty', propName, el, { propKey: propName });
+                                            });
+                                        }
                                     }
                                 }
+                            });
+                        } else if (t.isArrayExpression(arg)) {
+                            arg.elements.forEach(el => {
+                                if (this.isStrNode(el)) callback('NewExpression', name, el, { argIndex: index });
                             });
                         }
                     });
@@ -704,6 +749,14 @@ export class AstTranslator {
                 const name = this.getObjKeyName(node.key) || 'prop';
                 if (this.isStrNode(node.value)) {
                     report(path.get('value'), 'ObjectProperty', name, node.value);
+                } else if (t.isArrayExpression(node.value)) {
+                    // children 数组 (如 { children: ["a", "b"] })，与提取侧对称
+                    const elPaths = path.get('value').get('elements') as any[];
+                    elPaths.forEach(elPath => {
+                        if (elPath && elPath.node && this.isStrNode(elPath.node)) {
+                            report(elPath, 'ObjectProperty', name, elPath.node);
+                        }
+                    });
                 }
             },
             CallExpression: (path) => {
@@ -713,6 +766,14 @@ export class AstTranslator {
                 node.arguments.forEach((arg, index) => {
                     if (this.isStrNode(arg)) {
                         report(argPaths[index], 'CallExpression', name, arg);
+                    } else if (t.isArrayExpression(arg)) {
+                        // 顶层 children 数组 (如 jsx("div", null, "a", ["b"]))，与提取侧对称
+                        const elPaths = (argPaths[index] as any).get('elements') as any[];
+                        elPaths.forEach(elPath => {
+                            if (elPath && elPath.node && this.isStrNode(elPath.node)) {
+                                report(elPath, 'CallExpression', name, elPath.node);
+                            }
+                        });
                     }
                 });
             },
@@ -723,6 +784,13 @@ export class AstTranslator {
                 node.arguments.forEach((arg, index) => {
                     if (this.isStrNode(arg)) {
                         report(argPaths[index], 'NewExpression', name, arg);
+                    } else if (t.isArrayExpression(arg)) {
+                        const elPaths = (argPaths[index] as any).get('elements') as any[];
+                        elPaths.forEach(elPath => {
+                            if (elPath && elPath.node && this.isStrNode(elPath.node)) {
+                                report(elPath, 'NewExpression', name, elPath.node);
+                            }
+                        });
                     }
                 });
             }
@@ -850,6 +918,43 @@ export class AstTranslator {
             if (index >= 0 && this.getShorthandSkipArgs(fnName).includes(index)) return true;
         }
 
+        // 3. 数组元素：字符串的父节点是 ArrayExpression，向上再看一层。
+        // 数组本身处于结构性位置 (如 { className: ["foo"] } 的数组值、
+        // createDiv(["foo"]) 的简写参数数组) 时，其字符串元素同样不可翻译，
+        // 否则会误替换 CSS 类名 / 标识符，导致样式静默损坏。
+        if (t.isArrayExpression(parent)) {
+            const grand = path.parentPath.parentPath?.node;
+            if (!grand) return false;
+            if (t.isObjectProperty(grand) && grand.value === parent && !grand.computed) {
+                const keyName = this.getObjKeyName(grand.key);
+                if (keyName && this.isStructuralKey(keyName)) return true;
+            }
+            if ((t.isCallExpression(grand) || t.isNewExpression(grand)) && Array.isArray(grand.arguments)) {
+                const index = (grand.arguments as any[]).indexOf(parent);
+                const fnName = this.getCallName(grand.callee);
+                if (index >= 0 && this.getShorthandSkipArgs(fnName).includes(index)) return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * 字面量是否处于提取白名单上下文 (与 extract 的遍历口径对齐)
+     * 用于收紧宽松回退：仅当字面量确实落在 UI 文案上下文 (白名单的 变量/赋值/对象键/函数调用)
+     * 时才允许按 source 文本兜底替换，避免把内部 action 常量 (如 s('REMOVE',…)) 一并改写。
+     */
+    private isWhitelistedContext(type: string, name: string): boolean {
+        if (!name) return false;
+        if (type === 'VariableDeclarator' || type === 'AssignmentExpression') {
+            return this.config.assignments.includes(name);
+        }
+        if (type === 'ObjectProperty') {
+            return this.config.keys.includes(name) && !this.isStructuralKey(name);
+        }
+        if (type === 'CallExpression' || type === 'NewExpression') {
+            return this.config.functions.includes(name);
+        }
         return false;
     }
 

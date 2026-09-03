@@ -7,6 +7,8 @@
 
 import { requestUrl } from "obsidian";
 import { RegexItem, AstItem } from "../views/plugin_editor/types";
+import { JudgeItem } from "./provider-types";
+import { AiVerdict } from "../types";
 import { ThemeTranslationItem } from "../views/theme_editor/types";
 import { useGlobalStoreInstance } from "~/utils";
 import { BaseProvider } from "./base-provider";
@@ -31,7 +33,7 @@ export class GeminiTranslationService extends BaseProvider {
     /**
      * 调用 Gemini API
      */
-    private async callGemini(items: any[], systemPrompt: string, signal?: AbortSignal, maxRetries = 2): Promise<any[]> {
+    private async callGemini(items: any[], systemPrompt: string, signal?: AbortSignal, maxRetries = 2, parseFn?: (content: string) => any[]): Promise<any[]> {
         const activeProfile = this.getActiveProfile();
         if (!activeProfile) throw new Error('Missing active profile for Gemini');
         
@@ -94,14 +96,19 @@ export class GeminiTranslationService extends BaseProvider {
 
                 if (!content) throw new Error('Gemini 返回内容为空');
 
-                return this.parseResponseContent(content);
+                return (parseFn || this.parseResponseContent)(content);
             } catch (error: any) {
                 const isTimeout = error.name === 'AbortError' && !signal?.aborted;
                 const isManualAbort = signal?.aborted || error.message === '翻译任务已取消';
 
                 if (isManualAbort) throw new Error('翻译任务已取消');
 
-                lastError = isTimeout ? new Error(`请求超时 (${timeoutMs}ms)`) : error;
+                // Judge 模式 (parseFn 存在) 超时不重试：重试只会再等满一个完整超时周期
+                if (isTimeout && parseFn) {
+                    throw new Error(this.buildTimeoutMessage(timeoutMs));
+                }
+
+                lastError = isTimeout ? new Error(this.buildTimeoutMessage(timeoutMs)) : error;
                 attempt++;
 
                 if (attempt <= maxRetries) {
@@ -197,5 +204,20 @@ export class GeminiTranslationService extends BaseProvider {
         if (cleaned.startsWith("'") && cleaned.endsWith("'")) cleaned = cleaned.slice(1, -1);
 
         return cleaned;
+    }
+
+    public supportsJudge(): boolean {
+        return true;
+    }
+
+    /** Judge API — AI 判定 AST 条目是否需要翻译 (Gemini 实现) */
+    protected async callJudgeAPI(items: JudgeItem[], signal?: AbortSignal): Promise<JudgeItem[]> {
+        const systemPrompt = this.getJudgeSystemPrompt();
+        const simplified = items.map(it => ({ i: it.id, s: it.source, y: it.type ?? null, n: it.name ?? null, k: it.propKey ?? null, a: it.argIndex ?? null, c: it.snippet ?? null }));
+        const verdicts = await this.callGemini(simplified, systemPrompt, signal, 2, (c) => this.parseJudgeResponse(c)) as Array<{ i: number; verdict: AiVerdict; reason?: string; confidence?: number }>;
+        return items.map(it => {
+            const v = verdicts.find(x => x.i === it.id);
+            return { ...it, verdict: v?.verdict ?? 'unjudged', reason: v?.reason, confidence: v?.confidence };
+        });
     }
 }

@@ -266,6 +266,9 @@ export default {
         ThemePromptTitle: "主题 Prompt",
         ThemePromptDesc: "主题翻译模式下的翻译指令模板。",
         ThemePromptPlaceholder: "输入 Prompt 模板",
+        JudgePromptTitle: "AI 判定 Prompt",
+        JudgePromptDesc: "判定条目是否需要翻译时使用的指令模板，仅影响「AI 判定选中项」。判定请求会附带目标串前后的源码片段。",
+        JudgePromptPlaceholder: "输入 Prompt 模板",
         // ── 费用估算 ──
         PriceHeader: "费用估算",
         CustomPriceTitle: "自定义单价",

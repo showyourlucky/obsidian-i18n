@@ -1,6 +1,6 @@
 import I18N from "@/main";
 import { ReactView } from "~/utils";
-import { PluginTranslationV1, PluginTranslationV1Regex, PluginTranslationV1Metadata, PluginTranslationV1Ast } from "@/src/types";
+import { PluginTranslationV1, PluginTranslationV1Regex, PluginTranslationV1Metadata, PluginTranslationV1Ast, AiVerdict } from "@/src/types";
 
 // 基础类型定义 ====================================================================================================
 export interface EditorProps {
@@ -22,6 +22,17 @@ export interface AstItem {
     name: string;
     source: string;
     target: string;
+    // 源码位置与结构信号 (提取阶段写入，旧文件缺省 undefined)
+    start?: number;     // 字符偏移 (Babel node.start)
+    end?: number;       // 字符偏移 (Babel node.end)
+    line?: number;      // 源码行号 (1-based)，缺省 0
+    col?: number;       // 列号，缺省 0
+    propKey?: string;   // 所在对象属性键名 (如 placeholder/className/children)
+    argIndex?: number;  // 所在函数调用的实参下标 (如 createElement 第 0 参为标签名)
+    // AI 判定结果 (仅标注，不自动改数据)
+    aiVerdict?: AiVerdict;
+    aiReason?: string;
+    aiConfidence?: number;
 }
 
 export type DiagnoseError = {
@@ -97,6 +108,26 @@ export interface MetadataSlice {
     updateMetadata: (updates: Partial<PluginTranslationV1Metadata>) => void;
 }
 
+/**
+ * 源码文件的磁盘指纹。
+ * 用于识别源码是否被替换（插件更新、手动改写等），从而让过期的源码缓存失效。
+ */
+export interface SourceFingerprint {
+    /** 文件修改时间 (ms) */
+    mtimeMs: number;
+    /** 文件字节数 */
+    size: number;
+}
+
+/** 源码缓存条目 */
+export interface SourceCacheEntry {
+    code: string;
+    /** 取源时的 mtime；null 表示来源无磁盘对应物（如备份内容），不做失效校验 */
+    mtimeMs: number | null;
+    /** 取源时的字节数 */
+    size: number;
+}
+
 export interface DictSlice {
     // ========== 基础状态 ==========
     /** 完整的字典树数据 */
@@ -118,10 +149,13 @@ export interface DictSlice {
     deleteFile: (file: string) => void;
     /** 更新指定文件中的内容（用于保存前的同步） */
     syncFileDictInfo: (file: string, astItems: AstItem[], regexItems: RegexItem[]) => void;
-    /** 源码缓存（文件名 -> 源码） */
-    sourceCache: Record<string, string>;
-    /** 设置指定文件的源码缓存 */
-    setSourceCache: (file: string, code: string) => void;
+    /** 源码缓存（文件名 -> 源码条目，附带失效指纹） */
+    sourceCache: Record<string, SourceCacheEntry>;
+    /**
+     * 设置指定文件的源码缓存。
+     * fingerprint 缺省/为 null 表示来源无磁盘对应物（如备份内容），不做失效校验。
+     */
+    setSourceCache: (file: string, code: string, fingerprint?: SourceFingerprint | null) => void;
     /** 全局搜索过滤 */
     searchQuery: string;
     setSearchQuery: (query: string) => void;

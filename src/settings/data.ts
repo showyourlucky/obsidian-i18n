@@ -1,5 +1,5 @@
 import { pageRule } from '../utils';
-import { DEFAULT_AST_PROMPT_TEMPLATE, DEFAULT_REGEX_PROMPT_TEMPLATE, DEFAULT_THEME_PROMPT_TEMPLATE } from '../ai/prompts';
+import { DEFAULT_AST_PROMPT_TEMPLATE, DEFAULT_JUDGE_PROMPT_TEMPLATE, DEFAULT_REGEX_PROMPT_TEMPLATE, DEFAULT_THEME_PROMPT_TEMPLATE } from '../ai/prompts';
 import { LLM_PROVIDERS } from '../ai/constants';
 import { AST_DEFAULT_CONFIG, REGEX_DEFAULT_CONFIG } from '../utils/translator/config';
 
@@ -55,6 +55,7 @@ export interface I18nSettings {
     llmRegexPrompt?: string;        // LLM Regex 自定义提示词模板
     llmAstPrompt?: string;          // LLM AST 自定义提示词模板
     llmThemePrompt?: string;        // LLM Theme 自定义提示词模板
+    llmJudgePrompt?: string;        // LLM Judge (AI 判定是否需要翻译) 自定义提示词模板
 
     // ==========================================
     // 方案管理与计费配置 (所有服务商)
@@ -272,6 +273,7 @@ export const DEFAULT_SETTINGS: I18nSettings = {
     llmRegexPrompt: DEFAULT_REGEX_PROMPT_TEMPLATE,             // 默认加载内置的 Regex Prompt
     llmAstPrompt: DEFAULT_AST_PROMPT_TEMPLATE,               // 默认加载内置的 AST Prompt
     llmThemePrompt: DEFAULT_THEME_PROMPT_TEMPLATE,           // 默认加载内置的 Theme Prompt
+    llmJudgePrompt: DEFAULT_JUDGE_PROMPT_TEMPLATE,           // 默认加载内置的 Judge Prompt (AI 判定)
 
     // OpenAI 专属配置
     llmOpenaiUrl: '',

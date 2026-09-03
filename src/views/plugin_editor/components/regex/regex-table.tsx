@@ -12,6 +12,7 @@ import {
 import { useRegexStore } from '../..';
 import { RegexTableEmptyState } from './regex-table-empty-state';
 import { RegexItem, DiagnoseError } from '../../types';
+import { EDITOR_EVENTS } from '../../events';
 
 import {
     ColumnDef,
@@ -141,8 +142,8 @@ export const RegexTable = React.forwardRef<HTMLDivElement, Props>(({ data, editi
             }
             setErrorMap(map);
         };
-        window.addEventListener('i18n-diagnose-errors', handleErrors as EventListener);
-        return () => window.removeEventListener('i18n-diagnose-errors', handleErrors as EventListener);
+        window.addEventListener(EDITOR_EVENTS.DiagnoseErrors, handleErrors as EventListener);
+        return () => window.removeEventListener(EDITOR_EVENTS.DiagnoseErrors, handleErrors as EventListener);
     }, []);
 
     const columns = useMemo<ColumnDef<RegexItem>[]>(

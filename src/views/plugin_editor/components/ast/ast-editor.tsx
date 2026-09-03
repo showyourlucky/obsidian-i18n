@@ -1,12 +1,26 @@
 import React, { useMemo, useState, useCallback, useDeferredValue, useEffect } from 'react';
-import { Search, RotateCcw, Trash2, X } from 'lucide-react';
+import { Search, RotateCcw, Trash2, X, Sparkles, Loader2, WholeWord, Square } from 'lucide-react';
 import { Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Button, Checkbox } from '@/src/shadcn';
 import { useTranslation } from 'react-i18next';
 import { useRegexStore } from '../../store';
+import { EDITOR_EVENTS } from '../../events';
 import { ASTTable } from './ast-table';
+import { useAstJudge } from './use-ast-judge';
 
 type FilterType = 'all' | 'translated' | 'untranslated';
 type NameFilter = 'all' | string;
+
+/**
+ * 判定「单个单词」：无空白字符且长度受限的源文案
+ * 这类短串最常出现在难以判断是否该翻的场景 (标识符 / 短标签 / 状态值)，
+ * 故作为快速筛选项，便于集中交给 AI 判定或人工复核。
+ */
+const isSingleWord = (text?: string): boolean => {
+    if (!text) return false;
+    const s = text.trim();
+    if (!s || s.length > 32) return false;
+    return !/\s/.test(s);
+};
 
 interface Props {
     // 不再需要 sidebar 相关 props
@@ -19,6 +33,10 @@ const AstEditor: React.FC<Props> = () => {
     const setSearchQuery = useRegexStore.use.setSearchQuery();
     const [filterType, setFilterType] = useState<FilterType>('all');
     const [nameFilter, setNameFilter] = useState<NameFilter>('all');
+    // AI 判定状态过滤
+    const [aiFilter, setAiFilter] = useState<string>('all');
+    // 快速筛选：仅显示「单个单词」条目 (多为难以判断是否该翻的短文案)
+    const [wordOnly, setWordOnly] = useState(false);
 
     // 批量选择状态（仅在本地组件维护，不持久化到 store）
     const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -27,6 +45,8 @@ const AstEditor: React.FC<Props> = () => {
     const deferredSearchQuery = useDeferredValue(searchQuery);
     const deferredFilterType = useDeferredValue(filterType);
     const deferredNameFilter = useDeferredValue(nameFilter);
+    const deferredAiFilter = useDeferredValue(aiFilter);
+    const deferredWordOnly = useDeferredValue(wordOnly);
 
     // AST数据（从store获取）
     const astItems = useRegexStore.use.astItems();
@@ -34,6 +54,9 @@ const AstEditor: React.FC<Props> = () => {
     const resetAstItem = useRegexStore.use.resetAstItem();
     const deleteAstItemsByIds = useRegexStore.use.deleteAstItemsByIds();
     const resetAstItemsByIds = useRegexStore.use.resetAstItemsByIds();
+
+    // AI 判定 (选中项是否需要翻译)
+    const { state: judgeState, actions: judgeActions } = useAstJudge();
 
     // 当前编辑项ID
     const [editingId, setEditingId] = useState<number | null>(null);
@@ -45,6 +68,30 @@ const AstEditor: React.FC<Props> = () => {
 
     // Cleanup when file switches
     const currentFile = useRegexStore.use.currentFile();
+    // 源码预览：取内存缓存中的原始代码 (与诊断/逻辑审计同口径)
+    const sourceCache = useRegexStore.use.sourceCache();
+    const sourceCode = currentFile ? (sourceCache?.[currentFile]?.code ?? '') : '';
+
+    // 源码懒加载：上下文弹窗打开时请求主编辑器取源。
+    // 已有缓存时也要请求一次——主编辑器会用文件指纹校验缓存是否被插件更新作废；
+    // 这种情况不显示 loading（静默刷新），只有真正无源码可展示时才提示。
+    const [isLoadingSource, setIsLoadingSource] = useState(false);
+    const sourceTimerRef = React.useRef<number | null>(null);
+    const handleNeedSource = useCallback(() => {
+        if (!sourceCode) setIsLoadingSource(true);
+        window.dispatchEvent(new CustomEvent(EDITOR_EVENTS.LoadSource));
+        // 兜底：即使完成事件丢失（如无主编辑器监听），也不至于永久停在 loading
+        if (sourceTimerRef.current) window.clearTimeout(sourceTimerRef.current);
+        sourceTimerRef.current = window.setTimeout(() => setIsLoadingSource(false), 10000);
+    }, [sourceCode]);
+    React.useEffect(() => {
+        const handler = () => {
+            if (sourceTimerRef.current) window.clearTimeout(sourceTimerRef.current);
+            setIsLoadingSource(false);
+        };
+        window.addEventListener(EDITOR_EVENTS.SourceLoaded, handler);
+        return () => window.removeEventListener(EDITOR_EVENTS.SourceLoaded, handler);
+    }, []);
     React.useEffect(() => {
         setEditingId(null);
         setSelectedIds(new Set());
@@ -62,8 +109,8 @@ const AstEditor: React.FC<Props> = () => {
                 setEditingId(e.detail.id);
             }
         };
-        window.addEventListener('i18n-jump-error', handleJump as EventListener);
-        return () => window.removeEventListener('i18n-jump-error', handleJump as EventListener);
+        window.addEventListener(EDITOR_EVENTS.JumpError, handleJump as EventListener);
+        return () => window.removeEventListener(EDITOR_EVENTS.JumpError, handleJump as EventListener);
     }, [setSearchQuery]);
 
     // 提取所有不同的 name 值，用于名称下拉筛选
@@ -101,13 +148,21 @@ const AstEditor: React.FC<Props> = () => {
                 (item.type && item.type.toLowerCase().includes(query))
             );
         }
+        // 4. 按 AI 判定状态筛选
+        if (deferredAiFilter !== 'all') {
+            items = items.filter(item => (item.aiVerdict ?? 'unjudged') === deferredAiFilter);
+        }
+        // 5. 快速筛选：仅单个单词
+        if (deferredWordOnly) {
+            items = items.filter(item => isSingleWord(item.source));
+        }
         return items;
-    }, [astItems, deferredSearchQuery, deferredFilterType, deferredNameFilter]);
+    }, [astItems, deferredSearchQuery, deferredFilterType, deferredNameFilter, deferredAiFilter, deferredWordOnly]);
 
     // 切换筛选条件时清空选择（避免选中项与当前过滤结果不一致）
     useEffect(() => {
         setSelectedIds(new Set());
-    }, [deferredFilterType, deferredNameFilter, currentFile]);
+    }, [deferredFilterType, deferredNameFilter, deferredAiFilter, deferredWordOnly, currentFile]);
 
     // 当 astItems 变化导致 ID 重排时，清除失效的选择
     useEffect(() => {
@@ -180,14 +235,21 @@ const AstEditor: React.FC<Props> = () => {
         setSelectedIds(new Set());
     }, []);
 
+    // 在源码中查看 (通知主编辑器打开当前文件)
+    const handleOpenSource = useCallback(() => {
+        window.dispatchEvent(new CustomEvent(EDITOR_EVENTS.OpenSource));
+    }, []);
+
     // 批量删除
     const handleBatchDelete = useCallback(() => {
+        // 判定进行中删除条目会导致 store 内 id 重排，批次回写时判定结果错位到其他行
+        if (judgeState.isJudging) return;
         const ids = Array.from(selectedIds);
         if (ids.length === 0) return;
         if (!confirm(t('Editor.Notices.ConfirmBatchDelete', { count: ids.length }))) return;
         deleteAstItemsByIds(ids);
         setSelectedIds(new Set());
-    }, [selectedIds, deleteAstItemsByIds, t]);
+    }, [selectedIds, deleteAstItemsByIds, t, judgeState.isJudging]);
 
     // 批量还原
     const handleBatchReset = useCallback(() => {
@@ -196,6 +258,13 @@ const AstEditor: React.FC<Props> = () => {
         resetAstItemsByIds(ids);
         setSelectedIds(new Set());
     }, [selectedIds, resetAstItemsByIds]);
+
+    // AI 判定选中项（仅标注，不改 source/target，不删除）
+    const handleJudge = useCallback(() => {
+        const items = astItems.filter(i => selectedIds.has(i.id));
+        if (items.length === 0) return;
+        judgeActions.judge(items);
+    }, [astItems, selectedIds, judgeActions]);
 
     // 当前过滤结果中已选中的数量（用于全选 checkbox 的 indeterminate 状态）
     const filteredIdSet = useMemo(() => new Set(filteredItems.map(i => i.id)), [filteredItems]);
@@ -228,7 +297,7 @@ const AstEditor: React.FC<Props> = () => {
                                 <SelectValue placeholder={t('Common.Labels.Filter')} />
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="all">{t('Common.Filters.All')}</SelectItem>
+                                <SelectItem value="all">{t('Editor.Filters.TransAll', '全部翻译')}</SelectItem>
                                 <SelectItem value="translated">{t('Common.Filters.Translated')}</SelectItem>
                                 <SelectItem value="untranslated">{t('Common.Filters.Untranslated')}</SelectItem>
                             </SelectContent>
@@ -244,7 +313,29 @@ const AstEditor: React.FC<Props> = () => {
                                 ))}
                             </SelectContent>
                         </Select>
+                        <Select value={aiFilter} onValueChange={(v) => setAiFilter(v)}>
+                            <SelectTrigger size="sm" className="w-[110px]">
+                                <SelectValue placeholder={t('Editor.Labels.AiFilter', 'AI 判定')} />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">{t('Editor.Filters.AiAll', '全部判定')}</SelectItem>
+                                <SelectItem value="unjudged">{t('Editor.Verdict.Unjudged', '待判断')}</SelectItem>
+                                <SelectItem value="translatable">{t('Editor.Verdict.Translatable', '该翻')}</SelectItem>
+                                <SelectItem value="untranslatable">{t('Editor.Verdict.Untranslatable', '不该翻')}</SelectItem>
+                            </SelectContent>
+                        </Select>
                     </div>
+                    {/* 快速筛选：开关型，与左侧分类下拉语义正交，故单独置于右侧 */}
+                    <Button
+                        variant={wordOnly ? 'default' : 'outline'}
+                        size="sm"
+                        className="h-8 text-xs"
+                        onClick={() => setWordOnly(v => !v)}
+                        title={t('Editor.Filters.WordOnlyTip', '仅显示无空格的单个单词（多为难以判断是否该翻的短文案）')}
+                    >
+                        <WholeWord className="w-3.5 h-3.5 mr-1" />
+                        {t('Editor.Filters.WordOnly', '仅单词')}
+                    </Button>
                 </div>
 
                 {/* 批量操作工具栏（仅在有选中项时显示） */}
@@ -265,6 +356,33 @@ const AstEditor: React.FC<Props> = () => {
                             </Button>
                         </div>
                         <div className="flex items-center gap-1">
+                            {judgeState.isJudging ? (
+                                <div className="flex items-center gap-2 px-1">
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+                                    <span className="text-xs text-muted-foreground tabular-nums">{judgeState.progress}%</span>
+                                    <Button
+                                        variant="destructive"
+                                        size="sm"
+                                        className="h-7 text-xs"
+                                        onClick={judgeActions.handleStop}
+                                        title={t('Common.Actions.StopJudge', '停止判定')}
+                                    >
+                                        <Square className="w-3 h-3 mr-1 fill-current" />
+                                        {t('Common.Actions.StopJudge', '停止判定')}
+                                    </Button>
+                                </div>
+                            ) : (
+                                <Button
+                                    variant="default"
+                                    size="sm"
+                                    className="h-7 text-xs"
+                                    onClick={handleJudge}
+                                    title={t('Editor.Actions.JudgeSelected', 'AI 判定选中项')}
+                                >
+                                    <Sparkles className="w-3.5 h-3.5 mr-1" />
+                                    {t('Editor.Actions.JudgeSelected', 'AI 判定选中项')}
+                                </Button>
+                            )}
                             <Button
                                 variant="ghost"
                                 size="sm"
@@ -303,6 +421,11 @@ const AstEditor: React.FC<Props> = () => {
                         isAllSelected={isAllSelected}
                         isIndeterminate={isIndeterminate}
                         onToggleSelectAll={handleToggleSelectAll}
+                        sourceCode={sourceCode}
+                        onOpenSource={handleOpenSource}
+                        onNeedSource={handleNeedSource}
+                        isLoadingSource={isLoadingSource}
+                        judging={judgeState.isJudging}
                     />
                 </div>
             </div>
