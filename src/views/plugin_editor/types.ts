@@ -1,6 +1,6 @@
 import I18N from "@/main";
 import { ReactView } from "~/utils";
-import { PluginTranslationV1, PluginTranslationV1Regex, PluginTranslationV1Metadata, PluginTranslationV1Ast, AiVerdict } from "@/src/types";
+import { PluginTranslationV1, PluginTranslationV1Regex, PluginTranslationV1Metadata, PluginTranslationV1Ast, PluginTranslationFileDict, AiVerdict } from "@/src/types";
 
 // 基础类型定义 ====================================================================================================
 export interface EditorProps {
@@ -14,6 +14,8 @@ export interface RegexItem {
     id: number;
     source: string;
     target: string;
+    /** 人工标记：确认"不需要翻译"，与 AI 判定分离 */
+    ignored?: boolean;
 }
 
 export interface AstItem {
@@ -33,6 +35,8 @@ export interface AstItem {
     aiVerdict?: AiVerdict;
     aiReason?: string;
     aiConfidence?: number;
+    /** 人工标记：确认"不需要翻译"，与 AI 判定分离 */
+    ignored?: boolean;
 }
 
 export type DiagnoseError = {
@@ -131,16 +135,13 @@ export interface SourceCacheEntry {
 export interface DictSlice {
     // ========== 基础状态 ==========
     /** 完整的字典树数据 */
-    dictData: Record<string, {
-        ast: PluginTranslationV1Ast[];
-        regex: PluginTranslationV1Regex[];
-    }>;
+    dictData: Record<string, PluginTranslationFileDict>;
     /** 当前选中的文件 */
     currentFile: string;
 
     // ========== 操作 ==========
     /** 初始化整个 Dict 数据 */
-    setDictData: (data: Record<string, { ast: PluginTranslationV1Ast[], regex: PluginTranslationV1Regex[] }>) => void;
+    setDictData: (data: Record<string, PluginTranslationFileDict>) => void;
     /** 切换当前文件，这应该保存前一个文件的内容并加载新文件的内容 */
     setCurrentFile: (file: string) => void;
     /** 新增一个文件路径到字典中 */
@@ -149,6 +150,11 @@ export interface DictSlice {
     deleteFile: (file: string) => void;
     /** 更新指定文件中的内容（用于保存前的同步） */
     syncFileDictInfo: (file: string, astItems: AstItem[], regexItems: RegexItem[]) => void;
+    /**
+     * 同步人工标记到当前文件的 ignoredKeys 集合（随翻译文件持久化）。
+     * 保证条目被删除后重新提取时，命中集合的新条目自动恢复 ignored 标记。
+     */
+    applyIgnoredKeys: (kind: 'ast' | 'regex', added: string[], removed: string[]) => void;
     /** 源码缓存（文件名 -> 源码条目，附带失效指纹） */
     sourceCache: Record<string, SourceCacheEntry>;
     /**

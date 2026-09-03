@@ -4,12 +4,13 @@ import * as fs from 'fs-extra';
 import { ItemView, WorkspaceLeaf } from 'obsidian';
 import { Root } from 'react-dom/client';
 
-import { PluginTranslationV1, PluginTranslationV1Regex } from 'src/types';
+import { PluginTranslationV1, PluginTranslationV1Regex, PluginTranslationFileDict } from 'src/types';
 import I18N from "src/main";
 
 import { Button, Tabs, TabsContent, TabsList, TabsTrigger, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, Input, Label, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Card, Badge, ResizablePanelGroup, ResizablePanel, ResizableHandle, ScrollArea } from '~/shadcn';
 import { Save, Loader2, Plus, Trash2, ChevronDown, Folder, File, Info, Calendar, Hash, ChevronRight } from 'lucide-react';
 import { useRegexStore } from './store';
+import { astDictKey } from './store/dict-slice';
 
 import { EditorProps, DiagnoseError, SourceFingerprint } from './types';
 import { EDITOR_EVENTS } from './events';
@@ -107,6 +108,34 @@ const AutoSaveManager: React.FC<{ onSave: (silent?: boolean) => void, enabled: b
     return null;
 };
 
+/**
+ * 加载翻译源时，用 sidecar (ignored-keys.json) 的标记集合覆盖源内镜像。
+ * 翻译源可以被删除后全新提取，源内镜像随源一起消失，sidecar 才是标记的权威来源：
+ * 「删光翻译源 → 重新提取」后标记依然在，靠的就是这一步回标。
+ */
+const withSidecarIgnoredKeys = (
+    i18n: I18N,
+    pluginId: string | undefined,
+    dict: Record<string, PluginTranslationFileDict>,
+): Record<string, PluginTranslationFileDict> => {
+    const sourceManager = i18n?.sourceManager;
+    if (!sourceManager || !pluginId) return dict;
+
+    const byFile = sourceManager.getPluginIgnoredKeys(pluginId);
+    let changed = false;
+    const next: Record<string, PluginTranslationFileDict> = {};
+    for (const [file, entry] of Object.entries(dict)) {
+        const keys = byFile[file];
+        if (keys && (keys.ast.length > 0 || keys.regex.length > 0)) {
+            changed = true;
+            next[file] = { ...entry, ignoredKeys: { ast: keys.ast, regex: keys.regex } };
+        } else {
+            next[file] = entry;
+        }
+    }
+    return changed ? next : dict;
+};
+
 // 组件
 const ReactEditor: React.FC<EditorProps> = (_) => {
     const i18n = useGlobalStoreInstance.getState().i18n;
@@ -158,7 +187,8 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
 
         if (pluginTranslation?.dict) {
             useRegexStore.setState({ currentFile: '' });
-            setDictData(pluginTranslation.dict);
+            // 人工标记以 sidecar 为准覆盖源内镜像（删除翻译源后重新提取仍可恢复标记）
+            setDictData(withSidecarIgnoredKeys(i18n, pluginTranslation.metadata?.plugin, pluginTranslation.dict));
 
             const initialFile = pluginTranslation.dict['main.js'] ? 'main.js' : Object.keys(pluginTranslation.dict)[0];
             if (initialFile) {
@@ -278,8 +308,16 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
                 // 合并新旧数据
                 const merged = mergeAstItems(currentAstItems, newAstItems);
 
+                // 按 per-file 标记集合回标：条目被删除后重新提取时自动恢复「不需要翻译」标记
+                const { dictData, currentFile: file } = useRegexStore.getState();
+                const ignoredSet = new Set(dictData[file]?.ignoredKeys?.ast ?? []);
+
                 // 更新 store (重新分配 ID 以保证唯一性和连续性)
-                setAstItems(merged.map((item, index) => ({ ...item, id: index })));
+                setAstItems(merged.map((item, index) => ({
+                    ...item,
+                    id: index,
+                    ignored: item.ignored || ignoredSet.has(astDictKey(item))
+                })));
                 notice.success(t('Editor.Notices.SuccessIncrementalExtract'));
             }
         } catch (e) {
@@ -323,8 +361,16 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
             // 合并新旧数据
             const merged = mergeRegexItems(currentRegexItems, newRegexItems);
 
+            // 按 per-file 标记集合回标：条目被删除后重新提取时自动恢复「不需要翻译」标记
+            const { dictData, currentFile: file } = useRegexStore.getState();
+            const ignoredSet = new Set(dictData[file]?.ignoredKeys?.regex ?? []);
+
             // 更新 store (重新分配 ID)
-            setRegexItems(merged.map((item, index) => ({ ...item, id: index })));
+            setRegexItems(merged.map((item, index) => ({
+                ...item,
+                id: index,
+                ignored: item.ignored || ignoredSet.has(item.source)
+            })));
             notice.success(t('Editor.Notices.SuccessIncrementalExtract'));
         } catch (e) {
             notice.error(t('Editor.Errors.SyntaxErrorRegex') + ': ' + e);

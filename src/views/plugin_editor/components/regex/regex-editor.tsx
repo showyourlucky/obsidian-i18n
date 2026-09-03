@@ -19,10 +19,13 @@ const RegexEditor: React.FC<Props> = () => {
     const searchQuery = useRegexStore.use.searchQuery();
     const setSearchQuery = useRegexStore.use.setSearchQuery();
     const [filterType, setFilterType] = React.useState<FilterType>('all');
+    // 标记项筛选：all=全部 / hide=隐藏待删 / only=只看待删（复核后删除或重置标记）
+    const [ignoredFilter, setIgnoredFilter] = React.useState<'all' | 'hide' | 'only'>('all');
 
     // 搜索防抖：使用 useDeferredValue 延迟过滤计算
     const deferredSearchQuery = useDeferredValue(searchQuery);
     const deferredFilterType = useDeferredValue(filterType);
+    const deferredIgnoredFilter = useDeferredValue(ignoredFilter);
 
     const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
         setSearchQuery(e.target.value);
@@ -43,6 +46,7 @@ const RegexEditor: React.FC<Props> = () => {
     React.useEffect(() => {
         setEditingId(null);
         setFilterType('all');
+        setIgnoredFilter('all');
         setSearchQuery('');
     }, [currentFile, setSearchQuery]);
 
@@ -60,6 +64,13 @@ const RegexEditor: React.FC<Props> = () => {
         window.addEventListener(EDITOR_EVENTS.JumpError, handleJump as EventListener);
         return () => window.removeEventListener(EDITOR_EVENTS.JumpError, handleJump as EventListener);
     }, [setSearchQuery]);
+
+    // 已人工标记为「不需要翻译」的条目数（用于筛选开关上的计数）
+    const ignoredCount = useMemo(() => {
+        let count = 0;
+        for (const item of regexItems) if (item.ignored) count++;
+        return count;
+    }, [regexItems]);
 
     // 过滤后的条目（使用 deferred 值）
     const filteredItems = useMemo(() => {
@@ -80,8 +91,15 @@ const RegexEditor: React.FC<Props> = () => {
                 (item.target && item.target.toLowerCase().includes(query))
             );
         }
+
+        // 3. 标记项筛选：hide=隐藏待删 / only=只看待删
+        if (deferredIgnoredFilter === 'hide') {
+            items = items.filter(item => !item.ignored);
+        } else if (deferredIgnoredFilter === 'only') {
+            items = items.filter(item => item.ignored);
+        }
         return items;
-    }, [regexItems, deferredSearchQuery, deferredFilterType]);
+    }, [regexItems, deferredSearchQuery, deferredFilterType, deferredIgnoredFilter]);
 
     // 广播选中项给预览面板
     React.useEffect(() => {
@@ -126,6 +144,17 @@ const RegexEditor: React.FC<Props> = () => {
                             </SelectContent>
                         </Select>
                     </div>
+                    {/* 标记项查看方式：「只看待删」是标记项的复核入口，可逐行删除或重置标记 */}
+                    <Select value={ignoredFilter} onValueChange={(v) => setIgnoredFilter(v as 'all' | 'hide' | 'only')}>
+                        <SelectTrigger size="sm" className="w-[124px]" title={t('Editor.Filters.IgnoredViewTip', '「不需要翻译」标记项的查看方式')}>
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="all">{t('Editor.Filters.IgnoredAll', '全部')}</SelectItem>
+                            <SelectItem value="hide">{t('Editor.Filters.IgnoredHide', '隐藏待删')}</SelectItem>
+                            <SelectItem value="only">{t('Editor.Filters.IgnoredOnly', { count: ignoredCount, defaultValue: '只看待删 ({{count}})' })}</SelectItem>
+                        </SelectContent>
+                    </Select>
                 </div>
 
                 {/* 表格内容区域 */}

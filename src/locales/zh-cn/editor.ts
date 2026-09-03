@@ -68,7 +68,11 @@ export default {
         TransAll: "全部翻译",
         AiAll: "全部判定",
         WordOnly: "仅单词",
-        WordOnlyTip: "仅显示无空格的单个单词（多为难以判断是否该翻的短文案）"
+        WordOnlyTip: "仅显示无空格的单个单词（多为难以判断是否该翻的短文案）",
+        IgnoredAll: "全部",
+        IgnoredHide: "隐藏待删",
+        IgnoredOnly: "只看待删 ({{count}})",
+        IgnoredViewTip: "「不需要翻译」标记项的查看方式：待手动删除的条目可在「只看待删」中复核、删除或重置标记"
     },
     Actions: {
         BatchTranslate: "开始批量翻译 ({{count}})",
@@ -101,6 +105,9 @@ export default {
         ClearSelection: "取消选择",
         JudgeSelected: "AI 判定选中项",
         JudgeSuccess: "已判定 {{count}} 项",
+        MarkIgnored: "不需要翻译",
+        MarkIgnoredTip: "标记为不需要翻译（待手动删除）；标记错了可在「只看待删」中重置",
+        ClearIgnored: "取消标记",
         OpenSource: "在源码中查看"
     },
     Stats: {
@@ -151,7 +158,9 @@ export default {
     Verdict: {
         Unjudged: "待判断",
         Translatable: "该翻",
-        Untranslatable: "不该翻"
+        Untranslatable: "不该翻",
+        Ignored: "待删",
+        IgnoredTip: "已标记为不需要翻译，待手动删除；标记错了可在「只看待删」中重置"
     },
     Status: {
         ProcessingBatch: "正在翻译第 {{current}}/{{total}} 批...",

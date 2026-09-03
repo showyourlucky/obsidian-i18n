@@ -13,7 +13,7 @@ import {
     DialogHeader,
     DialogTitle
 } from '~/shadcn';
-import { RotateCcw, Trash2, MapPin, FileCode2, Loader2 } from 'lucide-react';
+import { RotateCcw, Trash2, MapPin, FileCode2, Loader2, EyeOff, Eye } from 'lucide-react';
 import {
     ColumnDef,
     flexRender,
@@ -23,6 +23,7 @@ import {
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { AstItem, DiagnoseError } from '../../types';
 import { EDITOR_EVENTS } from '../../events';
+import { IgnoredBadge } from '../common/ignored-badge';
 import { ASTTableEmptyState } from './ast-table-empty-state';
 import { useRegexStore } from '../../store';
 import { getSourceContext, createSourceContextCache } from '@/src/utils/common/source-context';
@@ -329,6 +330,7 @@ const HeaderCheckbox = React.memo(({
 export const ASTTable = React.forwardRef<HTMLDivElement, Props>(({ data, editingId, onRowClick, onDelete, onReset, selectedIds, onToggleRowSelect, isAllSelected, isIndeterminate, onToggleSelectAll, sourceCode, onOpenSource, onNeedSource, isLoadingSource, judging }, ref) => {
     const { t } = useTranslation();
     const updateAstItem = useRegexStore.use.updateAstItem();
+    const updateAstItems = useRegexStore.use.updateAstItems();
     const parentRef = useRef<HTMLDivElement>(null);
 
     // 源码上下文预览 (位置列点击打开)
@@ -456,8 +458,9 @@ export const ASTTable = React.forwardRef<HTMLDivElement, Props>(({ data, editing
                 id: "verdict",
                 header: ({ column }) => <div className="text-center">{t('Editor.Table.ColumnVerdict', 'AI 判定')}</div>,
                 cell: ({ row }) => (
-                    <div className="flex justify-center">
+                    <div className="flex justify-center items-center gap-1 flex-wrap">
                         <VerdictBadge item={row.original} />
+                        {row.original.ignored && <IgnoredBadge />}
                     </div>
                 ),
             },
@@ -468,6 +471,23 @@ export const ASTTable = React.forwardRef<HTMLDivElement, Props>(({ data, editing
                     const hasTranslation = row.original.target && row.original.target !== row.original.source;
                     return (
                         <div className="flex items-center justify-center gap-1">
+                            {/* 人工标记：不需要翻译（与 AI 判定分离，重跑 AI 不清掉） */}
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className={row.original.ignored
+                                    ? 'h-8 w-8 text-amber-600 hover:text-amber-700'
+                                    : 'h-8 w-8 text-muted-foreground hover:text-amber-600'}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    updateAstItems([{ id: row.original.id, updates: { ignored: !row.original.ignored } }]);
+                                }}
+                                title={row.original.ignored
+                                    ? t('Editor.Actions.ClearIgnored', '取消标记')
+                                    : t('Editor.Actions.MarkIgnored', '不需要翻译')}
+                            >
+                                {row.original.ignored ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+                            </Button>
                             <Button
                                 variant="ghost"
                                 size="icon"
@@ -501,7 +521,7 @@ export const ASTTable = React.forwardRef<HTMLDivElement, Props>(({ data, editing
         );
 
         return cols;
-    }, [onDelete, onReset, updateAstItem, onRowClick, selectionEnabled, isAllSelected, isIndeterminate, onToggleSelectAll, onToggleRowSelect, selectedIds, onNeedSource, handleOpenContext, judging, t]);
+    }, [onDelete, onReset, updateAstItem, updateAstItems, onRowClick, selectionEnabled, isAllSelected, isIndeterminate, onToggleSelectAll, onToggleRowSelect, selectedIds, onNeedSource, handleOpenContext, judging, t]);
 
     const table = useReactTable({
         data,

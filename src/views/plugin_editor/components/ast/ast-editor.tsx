@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useCallback, useDeferredValue, useEffect } from 'react';
-import { Search, RotateCcw, Trash2, X, Sparkles, Loader2, WholeWord, Square } from 'lucide-react';
+import { Search, RotateCcw, Trash2, X, Sparkles, Loader2, WholeWord, Square, EyeOff, Eye } from 'lucide-react';
 import { Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Button, Checkbox } from '@/src/shadcn';
 import { useTranslation } from 'react-i18next';
 import { useRegexStore } from '../../store';
@@ -37,6 +37,8 @@ const AstEditor: React.FC<Props> = () => {
     const [aiFilter, setAiFilter] = useState<string>('all');
     // 快速筛选：仅显示「单个单词」条目 (多为难以判断是否该翻的短文案)
     const [wordOnly, setWordOnly] = useState(false);
+    // 标记项筛选：all=全部 / hide=隐藏待删 / only=只看待删（复核后删除或重置标记）
+    const [ignoredFilter, setIgnoredFilter] = useState<'all' | 'hide' | 'only'>('all');
 
     // 批量选择状态（仅在本地组件维护，不持久化到 store）
     const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -47,6 +49,7 @@ const AstEditor: React.FC<Props> = () => {
     const deferredNameFilter = useDeferredValue(nameFilter);
     const deferredAiFilter = useDeferredValue(aiFilter);
     const deferredWordOnly = useDeferredValue(wordOnly);
+    const deferredIgnoredFilter = useDeferredValue(ignoredFilter);
 
     // AST数据（从store获取）
     const astItems = useRegexStore.use.astItems();
@@ -54,6 +57,7 @@ const AstEditor: React.FC<Props> = () => {
     const resetAstItem = useRegexStore.use.resetAstItem();
     const deleteAstItemsByIds = useRegexStore.use.deleteAstItemsByIds();
     const resetAstItemsByIds = useRegexStore.use.resetAstItemsByIds();
+    const updateAstItems = useRegexStore.use.updateAstItems();
 
     // AI 判定 (选中项是否需要翻译)
     const { state: judgeState, actions: judgeActions } = useAstJudge();
@@ -95,6 +99,7 @@ const AstEditor: React.FC<Props> = () => {
     React.useEffect(() => {
         setEditingId(null);
         setSelectedIds(new Set());
+        setIgnoredFilter('all');
     }, [currentFile]);
 
     React.useEffect(() => {
@@ -120,6 +125,13 @@ const AstEditor: React.FC<Props> = () => {
             if (item.name) names.add(item.name);
         }
  return Array.from(names).sort();
+    }, [astItems]);
+
+    // 已人工标记为「不需要翻译」的条目数（用于筛选开关上的计数）
+    const ignoredCount = useMemo(() => {
+        let count = 0;
+        for (const item of astItems) if (item.ignored) count++;
+        return count;
     }, [astItems]);
 
     // 过滤后的条目（使用 deferred 值，避免每次按键都同步计算）
@@ -156,13 +168,19 @@ const AstEditor: React.FC<Props> = () => {
         if (deferredWordOnly) {
             items = items.filter(item => isSingleWord(item.source));
         }
+        // 6. 标记项筛选：hide=隐藏待删 / only=只看待删
+        if (deferredIgnoredFilter === 'hide') {
+            items = items.filter(item => !item.ignored);
+        } else if (deferredIgnoredFilter === 'only') {
+            items = items.filter(item => item.ignored);
+        }
         return items;
-    }, [astItems, deferredSearchQuery, deferredFilterType, deferredNameFilter, deferredAiFilter, deferredWordOnly]);
+    }, [astItems, deferredSearchQuery, deferredFilterType, deferredNameFilter, deferredAiFilter, deferredWordOnly, deferredIgnoredFilter]);
 
     // 切换筛选条件时清空选择（避免选中项与当前过滤结果不一致）
     useEffect(() => {
         setSelectedIds(new Set());
-    }, [deferredFilterType, deferredNameFilter, deferredAiFilter, deferredWordOnly, currentFile]);
+    }, [deferredFilterType, deferredNameFilter, deferredAiFilter, deferredWordOnly, deferredIgnoredFilter, currentFile]);
 
     // 当 astItems 变化导致 ID 重排时，清除失效的选择
     useEffect(() => {
@@ -259,6 +277,14 @@ const AstEditor: React.FC<Props> = () => {
         setSelectedIds(new Set());
     }, [selectedIds, resetAstItemsByIds]);
 
+    // 批量标记/取消「不需要翻译」（人工标记，重跑 AI 判定不会清掉）
+    const handleBatchIgnore = useCallback((ignored: boolean) => {
+        const ids = Array.from(selectedIds);
+        if (ids.length === 0) return;
+        updateAstItems(ids.map(id => ({ id, updates: { ignored } })));
+        setSelectedIds(new Set());
+    }, [selectedIds, updateAstItems]);
+
     // AI 判定选中项（仅标注，不改 source/target，不删除）
     const handleJudge = useCallback(() => {
         const items = astItems.filter(i => selectedIds.has(i.id));
@@ -336,6 +362,17 @@ const AstEditor: React.FC<Props> = () => {
                         <WholeWord className="w-3.5 h-3.5 mr-1" />
                         {t('Editor.Filters.WordOnly', '仅单词')}
                     </Button>
+                    {/* 标记项查看方式：「只看待删」是标记项的复核入口，可批量删除或重置标记 */}
+                    <Select value={ignoredFilter} onValueChange={(v) => setIgnoredFilter(v as 'all' | 'hide' | 'only')}>
+                        <SelectTrigger size="sm" className="w-[124px]" title={t('Editor.Filters.IgnoredViewTip', '「不需要翻译」标记项的查看方式')}>
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="all">{t('Editor.Filters.IgnoredAll', '全部')}</SelectItem>
+                            <SelectItem value="hide">{t('Editor.Filters.IgnoredHide', '隐藏待删')}</SelectItem>
+                            <SelectItem value="only">{t('Editor.Filters.IgnoredOnly', { count: ignoredCount, defaultValue: '只看待删 ({{count}})' })}</SelectItem>
+                        </SelectContent>
+                    </Select>
                 </div>
 
                 {/* 批量操作工具栏（仅在有选中项时显示） */}
@@ -392,6 +429,26 @@ const AstEditor: React.FC<Props> = () => {
                             >
                                 <RotateCcw className="w-3.5 h-3.5 mr-1" />
                                 {t('Editor.Actions.BatchRestore')}
+                            </Button>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 text-xs text-muted-foreground hover:text-amber-600"
+                                onClick={() => handleBatchIgnore(true)}
+                                title={t('Editor.Actions.MarkIgnoredTip', '标记为不需要翻译（待手动删除）；标记错了可在「只看待删」中重置')}
+                            >
+                                <EyeOff className="w-3.5 h-3.5 mr-1" />
+                                {t('Editor.Actions.MarkIgnored', '不需要翻译')}
+                            </Button>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 text-xs text-muted-foreground hover:text-primary"
+                                onClick={() => handleBatchIgnore(false)}
+                                title={t('Editor.Actions.ClearIgnored', '取消标记')}
+                            >
+                                <Eye className="w-3.5 h-3.5 mr-1" />
+                                {t('Editor.Actions.ClearIgnored', '取消标记')}
                             </Button>
                             <Button
                                 variant="ghost"

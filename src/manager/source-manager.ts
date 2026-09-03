@@ -4,7 +4,7 @@
  */
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import { TranslationSourceMeta, TranslationSource, EMPTY_META } from '../types';
+import { TranslationSourceMeta, TranslationSource, EMPTY_META, PluginTranslationV1, IgnoredKeysStore, EMPTY_IGNORED_KEYS } from '../types';
 import { calculateChecksum } from '../utils/translator/translation';
 import { nanoid } from 'nanoid';
 import { useGlobalStoreInstance } from '~/utils';
@@ -16,14 +16,18 @@ export class SourceManager {
     public sourcesDir: string;         // translation-sources目录
     private metaPath: string;           // meta.json路径
     private checkpointPath: string;     // backup-checkpoint.json路径
+    private ignoredKeysPath: string;    // ignored-keys.json路径 (人工标记，生命周期独立于翻译源)
     private meta: TranslationSourceMeta;
+    private ignoredKeys: IgnoredKeysStore;
 
     constructor(i18nPluginDir: string) {
         this.basePath = i18nPluginDir;
         this.sourcesDir = path.join(i18nPluginDir, 'translations');
         this.metaPath = path.join(i18nPluginDir, 'metadata.json');
         this.checkpointPath = path.join(i18nPluginDir, 'backup-checkpoint.json');
+        this.ignoredKeysPath = path.join(i18nPluginDir, 'ignored-keys.json');
         this.meta = this.loadMeta();
+        this.ignoredKeys = this.loadIgnoredKeysStore();
     }
 
     // ========== 元数据管理 ========== 
@@ -341,11 +345,104 @@ export class SourceManager {
         }
     }
 
+    // ========== 人工标记持久化 (ignored-keys.json) ==========
+
+    /**
+     * 加载人工标记存储。标记独立于翻译源持久化：
+     * 翻译源可以删了重新提取，但「用户判定这条不需要翻译」是花了人工成本的知识，必须活得更久。
+     */
+    private loadIgnoredKeysStore(): IgnoredKeysStore {
+        try {
+            if (fs.existsSync(this.ignoredKeysPath)) {
+                const raw = fs.readJsonSync(this.ignoredKeysPath);
+                if (raw?.plugins && typeof raw.plugins === 'object') {
+                    return { version: 1, plugins: raw.plugins };
+                }
+            }
+        } catch (error) {
+            console.error('[SourceManager] Failed to load ignored keys:', error);
+        }
+        return JSON.parse(JSON.stringify(EMPTY_IGNORED_KEYS));
+    }
+
+    private saveIgnoredKeysStore(): void {
+        try {
+            fs.ensureDirSync(this.basePath);
+            fs.writeJsonSync(this.ignoredKeysPath, this.ignoredKeys, { spaces: 2 });
+        } catch (error) {
+            console.error('[SourceManager] Failed to save ignored keys:', error);
+        }
+    }
+
+    private setIgnoredKeys(pluginId: string, file: string, keys: { ast: string[]; regex: string[] }): void {
+        const plugins = { ...this.ignoredKeys.plugins };
+        plugins[pluginId] = { ...(plugins[pluginId] ?? {}), [file]: keys };
+        this.ignoredKeys = { version: 1, plugins };
+        this.saveIgnoredKeysStore();
+    }
+
+    /**
+     * 读取某插件全部源文件的人工标记集合（权威来源）。
+     * 只认 sidecar——功能发布起标记就只存在这里，不存在需要从翻译源回填的存量数据。
+     */
+    public getPluginIgnoredKeys(pluginId: string): Record<string, { ast: string[]; regex: string[] }> {
+        const stored = this.ignoredKeys.plugins[pluginId];
+        const normalized: Record<string, { ast: string[]; regex: string[] }> = {};
+        for (const [file, keys] of Object.entries(stored ?? {})) {
+            normalized[file] = { ast: keys?.ast ?? [], regex: keys?.regex ?? [] };
+        }
+        return normalized;
+    }
+
+    /**
+     * 增量更新标记集合（编辑器内标记/取消标记时调用）。
+     * 同步落盘：标记是低频人工操作，无需防抖；写失败只记日志，不阻断编辑操作。
+     */
+    public upsertIgnoredKeys(pluginId: string, file: string, kind: 'ast' | 'regex', added: string[], removed: string[]): void {
+        if (!pluginId || !file || (added.length === 0 && removed.length === 0)) return;
+        const current = this.getPluginIgnoredKeys(pluginId)[file] ?? { ast: [], regex: [] };
+        const keys = new Set(current[kind]);
+        for (const key of added) keys.add(key);
+        for (const key of removed) keys.delete(key);
+        this.setIgnoredKeys(pluginId, file, { ...current, [kind]: Array.from(keys) });
+    }
+
+    /** 清空某插件（或全部）的人工标记。删除翻译源不会自动调用：删源 ≠ 判定作废。 */
+    public clearIgnoredKeys(pluginId?: string): void {
+        if (!pluginId) {
+            this.ignoredKeys = JSON.parse(JSON.stringify(EMPTY_IGNORED_KEYS));
+        } else {
+            const plugins = { ...this.ignoredKeys.plugins };
+            delete plugins[pluginId];
+            this.ignoredKeys = { version: 1, plugins };
+        }
+        this.saveIgnoredKeysStore();
+    }
+
+    /**
+     * 把 sidecar 里的权威标记写进新提取的翻译内容（源内镜像）。
+     * 注意：会原地修改 content，必须在计算 checksum 之前调用。
+     */
+    private applyIgnoredKeysInto(pluginId: string, content: PluginTranslationV1): void {
+        // 仅插件类翻译 (dict 为对象) 有该机制；主题的 dict 是数组，跳过
+        if (!content?.dict || typeof content.dict !== 'object' || Array.isArray(content.dict)) return;
+
+        for (const [file, keys] of Object.entries(this.getPluginIgnoredKeys(pluginId))) {
+            if (!content.dict[file]) continue;
+            if (keys.ast.length === 0 && keys.regex.length === 0) continue;
+            content.dict[file].ignoredKeys = { ast: keys.ast, regex: keys.regex };
+        }
+    }
+
     /**
      * 执行提取流程 (始终新建)
      */
     public async extractAndSaveSource(pluginId: string, content: any, options: TranslationExtractionOptions): Promise<string> {
         const sourceId = this.generateRandomId();
+
+        // 提取始终全新生成，但人工「不需要翻译」标记须跨提取持久：先写入源内镜像再算 checksum，
+        // 保证 checksum 与最终落盘内容一致
+        this.applyIgnoredKeysInto(pluginId, content);
 
         const translationSource: TranslationSource = {
             id: sourceId,

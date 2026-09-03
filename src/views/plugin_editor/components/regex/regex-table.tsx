@@ -13,6 +13,7 @@ import { useRegexStore } from '../..';
 import { RegexTableEmptyState } from './regex-table-empty-state';
 import { RegexItem, DiagnoseError } from '../../types';
 import { EDITOR_EVENTS } from '../../events';
+import { IgnoredBadge } from '../common/ignored-badge';
 
 import {
     ColumnDef,
@@ -21,7 +22,7 @@ import {
     useReactTable,
 } from "@tanstack/react-table";
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { RotateCcw, Trash2 } from 'lucide-react';
+import { RotateCcw, Trash2, EyeOff, Eye } from 'lucide-react';
 
 export interface Props {
     data: RegexItem[];
@@ -152,8 +153,11 @@ export const RegexTable = React.forwardRef<HTMLDivElement, Props>(({ data, editi
                 accessorKey: "source",
                 header: ({ column }) => <div className="text-center pl-4">{t('Editor.Table.ColumnSource')}</div>,
                 cell: ({ row }) => (
-                    <div className="break-all whitespace-pre-wrap text-sm leading-relaxed px-1 py-1 pl-4 cursor-text select-text">
-                        {row.original.source}
+                    <div className="flex items-start gap-1.5 px-1 py-1 pl-4 cursor-text select-text">
+                        {row.original.ignored && <IgnoredBadge />}
+                        <div className="break-all whitespace-pre-wrap text-sm leading-relaxed">
+                            {row.original.source}
+                        </div>
                     </div>
                 ),
             },
@@ -177,6 +181,23 @@ export const RegexTable = React.forwardRef<HTMLDivElement, Props>(({ data, editi
                     const hasTranslation = row.original.target && row.original.target !== row.original.source;
                     return (
                         <div className="flex items-center justify-center gap-1">
+                            {/* 人工标记：不需要翻译（与 AI 判定分离，重跑 AI 不清掉） */}
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className={row.original.ignored
+                                    ? 'h-8 w-8 text-amber-600 hover:text-amber-700'
+                                    : 'h-8 w-8 text-muted-foreground hover:text-amber-600'}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    updateRegexItem(row.original.id, { ignored: !row.original.ignored });
+                                }}
+                                title={row.original.ignored
+                                    ? t('Editor.Actions.ClearIgnored', '取消标记')
+                                    : t('Editor.Actions.MarkIgnored', '不需要翻译')}
+                            >
+                                {row.original.ignored ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+                            </Button>
                             <Button
                                 variant="ghost"
                                 size="icon"

@@ -1,5 +1,7 @@
 import { StateCreator } from 'zustand';
 import { RegexStore, DictSlice } from '../types';
+import { PluginTranslationFileDict } from '@/src/types';
+import { useGlobalStoreInstance } from '~/utils';
 
 /**
  * AstItem → 持久化字典条目的序列化字段列表。
@@ -19,7 +21,76 @@ const toAstDictItem = (item: RegexStore['astItems'][number]) => ({
     aiVerdict: item.aiVerdict,
     aiReason: item.aiReason,
     aiConfidence: item.aiConfidence,
+    ignored: item.ignored,
 });
+
+/**
+ * AST 条目的标记 key，与 mergeAstItems 的唯一标识 (type|name|source) 保持一致。
+ * 供「删除条目 → 重新提取」时按 key 恢复人工标记。
+ */
+export const astDictKey = (item: { type: string; name?: string; source: string }): string =>
+    `${item.type}|${item.name || ''}|${item.source}`;
+
+/**
+ * 把条目上的人工标记并回 per-file key 集合 (并集，不自减)。
+ * 用于文件切换/保存时自愈：旧数据条目上的 ignored 无条件沉淀进集合，
+ * 保证「删除条目 → 重新提取」时标记可恢复；「取消标记」走 applyIgnoredKeys 从集合移除。
+ */
+const mergeIgnoredKeys = (
+    existing: PluginTranslationFileDict['ignoredKeys'],
+    astItems: readonly { ignored?: boolean; type: string; name?: string; source: string }[],
+    regexItems: readonly { ignored?: boolean; source: string }[],
+): NonNullable<PluginTranslationFileDict['ignoredKeys']> => {
+    const ast = new Set(existing?.ast ?? []);
+    const regex = new Set(existing?.regex ?? []);
+    for (const item of astItems) if (item.ignored) ast.add(astDictKey(item));
+    for (const item of regexItems) if (item.ignored) regex.add(item.source);
+    return { ast: Array.from(ast), regex: Array.from(regex) };
+};
+
+/**
+ * 把标记变化同步到 sidecar 持久化 (ignored-keys.json)。
+ * sidecar 是标记的权威来源——翻译源可被删除后全新提取，只有它活得比翻译源久。
+ * 写失败只记日志：sidecar 是恢复通道，失败不该阻断编辑器内的标记操作。
+ */
+const persistIgnoredKeys = (
+    pluginId: string | undefined,
+    file: string,
+    kind: 'ast' | 'regex',
+    added: string[],
+    removed: string[],
+): void => {
+    if (!pluginId || !file) return;
+    try {
+        useGlobalStoreInstance.getState().i18n?.sourceManager
+            ?.upsertIgnoredKeys(pluginId, file, kind, added, removed);
+    } catch (error) {
+        console.error('[Editor] Failed to persist ignored keys:', error);
+    }
+};
+
+/**
+ * dict 条目 → store 条目：重分配 id，并按 ignoredKeys 集合回标人工标记。
+ * 加载侧也必须回标：管理中心的主提取流程是全新生成条目后连集合一起落盘，
+ * 集合是标记的权威来源，仅靠条目上的 ignored 恢复不了已删除的条目。
+ */
+const hydrateDictItems = (fileData: NonNullable<RegexStore['dictData'][string]>) => {
+    const ignoredAst = new Set(fileData.ignoredKeys?.ast ?? []);
+    const ignoredRegex = new Set(fileData.ignoredKeys?.regex ?? []);
+    return {
+        astItems: fileData.ast.map((item, index) => ({
+            ...item,
+            id: index,
+            ignored: item.ignored || ignoredAst.has(astDictKey(item))
+        })),
+        regexItems: fileData.regex.map((item, index) => ({
+            id: index,
+            source: item.source,
+            target: item.target,
+            ignored: item.ignored || ignoredRegex.has(item.source)
+        }))
+    };
+};
 
 export const createDictSlice: StateCreator<
     RegexStore,
@@ -50,22 +121,29 @@ export const createDictSlice: StateCreator<
             const { currentFile, astItems, regexItems, dictData } = state;
             const newData = { ...dictData };
 
-            // 1. 保存当前进度到原文件
+            // 1. 保存当前进度到原文件 (同时把条目上的标记沉淀进 ignoredKeys)
             if (currentFile && newData[currentFile]) {
                 newData[currentFile] = {
                     ast: astItems.map(toAstDictItem),
-                    regex: regexItems.map(item => ({ source: item.source, target: item.target }))
+                    regex: regexItems.map(item => ({ source: item.source, target: item.target, ignored: item.ignored })),
+                    ignoredKeys: mergeIgnoredKeys(newData[currentFile].ignoredKeys, astItems, regexItems)
                 };
             }
 
-            // 2. 获取新文件内容
-            const nextFileData = newData[file] || { ast: [], regex: [] };
-            const nextAstItems = nextFileData.ast.map((item, index) => ({ ...item, id: index }));
-            const nextRegexItems = nextFileData.regex.map((item, index) => ({
-                id: index,
-                source: item.source,
-                target: item.target
-            }));
+            // 2. 获取新文件内容 (加载侧同样回填：条目上的 ignored 并入 ignoredKeys)
+            const prevFileData = newData[file];
+            let nextFileData: NonNullable<RegexStore['dictData'][string]>;
+            if (prevFileData) {
+                nextFileData = {
+                    ast: prevFileData.ast,
+                    regex: prevFileData.regex,
+                    ignoredKeys: mergeIgnoredKeys(prevFileData.ignoredKeys, prevFileData.ast, prevFileData.regex)
+                };
+                newData[file] = nextFileData;
+            } else {
+                nextFileData = { ast: [], regex: [] };
+            }
+            const { astItems: nextAstItems, regexItems: nextRegexItems } = hydrateDictItems(nextFileData);
 
             // 3. 一次性更新所有状态
             return {
@@ -100,7 +178,8 @@ export const createDictSlice: StateCreator<
             if (currentFile && newData[currentFile] && currentFile !== file) {
                 newData[currentFile] = {
                     ast: astItems.map(toAstDictItem),
-                    regex: regexItems.map(item => ({ source: item.source, target: item.target }))
+                    regex: regexItems.map(item => ({ source: item.source, target: item.target, ignored: item.ignored })),
+                    ignoredKeys: mergeIgnoredKeys(newData[currentFile].ignoredKeys, astItems, regexItems)
                 };
             }
 
@@ -121,15 +200,12 @@ export const createDictSlice: StateCreator<
                 const nextFile = newData['main.js'] ? 'main.js' : Object.keys(newData)[0] || '';
                 if (nextFile) {
                     const nextFileData = newData[nextFile] || { ast: [], regex: [] };
+                    const { astItems: nextAstItems, regexItems: nextRegexItems } = hydrateDictItems(nextFileData);
                     nextState = {
                         ...nextState,
                         currentFile: nextFile,
-                        astItems: nextFileData.ast.map((item, index) => ({ ...item, id: index })),
-                        regexItems: nextFileData.regex.map((item, index) => ({
-                            id: index,
-                            source: item.source,
-                            target: item.target
-                        }))
+                        astItems: nextAstItems,
+                        regexItems: nextRegexItems
                     };
                 } else {
                     nextState = {
@@ -149,9 +225,38 @@ export const createDictSlice: StateCreator<
             const newData = { ...state.dictData };
             newData[file] = {
                 ast: newAstItems.map(toAstDictItem),
-                regex: newRegexItems.map(item => ({ source: item.source, target: item.target }))
+                regex: newRegexItems.map(item => ({ source: item.source, target: item.target, ignored: item.ignored })),
+                // 保存前同步：条目上的标记沉淀进集合 (并集)，保证跨删除/重新提取持久
+                ignoredKeys: mergeIgnoredKeys(state.dictData[file]?.ignoredKeys, newAstItems, newRegexItems)
             };
             return { dictData: newData };
+        });
+    },
+
+    applyIgnoredKeys: (kind, added, removed) => {
+        if (added.length === 0 && removed.length === 0) return;
+        set((state) => {
+            const file = state.currentFile;
+            const entry = state.dictData[file];
+            if (!entry) return state;
+
+            const keys = new Set(entry.ignoredKeys?.[kind] ?? []);
+            for (const key of added) keys.add(key);
+            for (const key of removed) keys.delete(key);
+            const nextKeys = { ...entry.ignoredKeys, [kind]: Array.from(keys) };
+
+            // 同步到 sidecar：删除翻译源后重新提取，靠它恢复标记
+            persistIgnoredKeys(state.metadata?.plugin, file, kind, added, removed);
+
+            return {
+                dictData: {
+                    ...state.dictData,
+                    [file]: {
+                        ...entry,
+                        ignoredKeys: nextKeys
+                    }
+                }
+            };
         });
     }
 });
