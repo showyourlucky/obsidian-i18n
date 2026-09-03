@@ -17,7 +17,7 @@ import { EDITOR_EVENTS } from './events';
 import { RegexEditor, AstEditor } from '.';
 
 import { useGlobalStoreInstance } from '~/utils';
-import { AstTranslator, RegexTranslator, mergeAstItems, mergeRegexItems, mountReactView, StringPicker } from '~/utils';
+import { AstTranslator, RegexTranslator, mergeAstItems, mergeRegexItems, mountReactView, StringPicker, applyTranslationMemory, buildMemoryIndex } from '~/utils';
 import { LogicStringHit } from '~/utils/translator/core-ast-translator';
 import { calculateChecksum } from '@/src/utils/translator/translation';
 import { saveTranslationFile } from '@/src/manager/io-manager';
@@ -50,6 +50,13 @@ function readFileFingerprint(filePath: string): SourceFingerprint | null {
         return null;
     }
 }
+
+/**
+ * 翻译记忆的语言分区键：优先翻译源自身的语言，缺省退回全局设置。
+ * 必须与管理中心 (generatePlugin 的 language 入参) 保持同一口径，否则换语言后记忆会串区。
+ */
+const memoryLanguage = (metadata: { language?: string } | null, i18n: I18N): string =>
+    metadata?.language || i18n.settings.language || '';
 
 const SaveButton: React.FC<{ onSave: () => void; isSaving: boolean }> = React.memo(({ onSave, isSaving }) => {
     const { t } = useTranslation();
@@ -308,17 +315,30 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
                 // 合并新旧数据
                 const merged = mergeAstItems(currentAstItems, newAstItems);
 
+                // 翻译记忆回填：命中记忆的无译文条目直接复用历史译文，无需再走 AI 翻译
+                let mergedItems: typeof merged = merged;
+                let memoryHitCount = 0;
+                if (i18n.settings.translationMemoryEnabled) {
+                    const memoryIndex = buildMemoryIndex(
+                        i18n.translationMemory.getPluginMemory(pluginId, memoryLanguage(metadata, i18n))
+                    );
+                    const applied = applyTranslationMemory(merged, memoryIndex);
+                    mergedItems = applied.items;
+                    memoryHitCount = applied.hitCount;
+                }
+
                 // 按 per-file 标记集合回标：条目被删除后重新提取时自动恢复「不需要翻译」标记
                 const { dictData, currentFile: file } = useRegexStore.getState();
                 const ignoredSet = new Set(dictData[file]?.ignoredKeys?.ast ?? []);
 
                 // 更新 store (重新分配 ID 以保证唯一性和连续性)
-                setAstItems(merged.map((item, index) => ({
+                setAstItems(mergedItems.map((item, index) => ({
                     ...item,
                     id: index,
                     ignored: item.ignored || ignoredSet.has(astDictKey(item))
                 })));
-                notice.success(t('Editor.Notices.SuccessIncrementalExtract'));
+                notice.success(t('Editor.Notices.SuccessIncrementalExtract') +
+                    (memoryHitCount > 0 ? `，${t('Editor.Hints.MemoryReusedCount', { count: memoryHitCount })}` : ''));
             }
         } catch (e) {
             notice.error(t('Editor.Errors.SyntaxErrorAst') + ': ' + e);
@@ -361,17 +381,30 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
             // 合并新旧数据
             const merged = mergeRegexItems(currentRegexItems, newRegexItems);
 
+            // 翻译记忆回填：命中记忆的无译文条目直接复用历史译文，无需再走 AI 翻译
+            let mergedItems: typeof merged = merged;
+            let memoryHitCount = 0;
+            if (i18n.settings.translationMemoryEnabled) {
+                const memoryIndex = buildMemoryIndex(
+                    i18n.translationMemory.getPluginMemory(pluginId, memoryLanguage(metadata, i18n))
+                );
+                const applied = applyTranslationMemory(merged, memoryIndex);
+                mergedItems = applied.items;
+                memoryHitCount = applied.hitCount;
+            }
+
             // 按 per-file 标记集合回标：条目被删除后重新提取时自动恢复「不需要翻译」标记
             const { dictData, currentFile: file } = useRegexStore.getState();
             const ignoredSet = new Set(dictData[file]?.ignoredKeys?.regex ?? []);
 
             // 更新 store (重新分配 ID)
-            setRegexItems(merged.map((item, index) => ({
+            setRegexItems(mergedItems.map((item, index) => ({
                 ...item,
                 id: index,
                 ignored: item.ignored || ignoredSet.has(item.source)
             })));
-            notice.success(t('Editor.Notices.SuccessIncrementalExtract'));
+            notice.success(t('Editor.Notices.SuccessIncrementalExtract') +
+                (memoryHitCount > 0 ? `，${t('Editor.Hints.MemoryReusedCount', { count: memoryHitCount })}` : ''));
         } catch (e) {
             notice.error(t('Editor.Errors.SyntaxErrorRegex') + ': ' + e);
         }
@@ -932,12 +965,13 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
             if (error.type === 'ast') {
                 const idx = newAstItems.findIndex(i => i.id === error.id);
                 if (idx !== -1) {
-                    newAstItems[idx] = { ...newAstItems[idx], target: newAstItems[idx].source };
+                    // 还原后不再是「翻译记忆回填」状态，清除运行时标记
+                    newAstItems[idx] = { ...newAstItems[idx], target: newAstItems[idx].source, tmHit: undefined };
                 }
             } else if (error.type === 'regex') {
                 const idx = newRegexItems.findIndex(i => i.id === error.id);
                 if (idx !== -1) {
-                    newRegexItems[idx] = { ...newRegexItems[idx], target: newRegexItems[idx].source };
+                    newRegexItems[idx] = { ...newRegexItems[idx], target: newRegexItems[idx].source, tmHit: undefined };
                 }
             }
         });
@@ -974,13 +1008,14 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
             if (error.type === 'ast') {
                 const currentAstItems = useRegexStore.getState().astItems;
                 const updated = currentAstItems.map(item =>
-                    item.id === error.id ? { ...item, target: fixedTarget } : item
+                    // AI 修复后译文不再是记忆原文照搬，清除运行时标记
+                    item.id === error.id ? { ...item, target: fixedTarget, tmHit: undefined } : item
                 );
                 setAstItems(updated);
             } else {
                 const currentRegexItems = useRegexStore.getState().regexItems;
                 const updated = currentRegexItems.map(item =>
-                    item.id === error.id ? { ...item, target: fixedTarget } : item
+                    item.id === error.id ? { ...item, target: fixedTarget, tmHit: undefined } : item
                 );
                 setRegexItems(updated);
             }

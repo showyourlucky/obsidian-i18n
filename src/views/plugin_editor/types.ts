@@ -16,6 +16,8 @@ export interface RegexItem {
     target: string;
     /** 人工标记：确认"不需要翻译"，与 AI 判定分离 */
     ignored?: boolean;
+    /** 运行时标记：译文由翻译记忆自动回填（不落盘，重新加载后消失） */
+    tmHit?: boolean;
 }
 
 export interface AstItem {
@@ -37,6 +39,8 @@ export interface AstItem {
     aiConfidence?: number;
     /** 人工标记：确认"不需要翻译"，与 AI 判定分离 */
     ignored?: boolean;
+    /** 运行时标记：译文由翻译记忆自动回填（不落盘，重新加载后消失） */
+    tmHit?: boolean;
 }
 
 export type DiagnoseError = {

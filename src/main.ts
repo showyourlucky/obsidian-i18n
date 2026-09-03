@@ -11,7 +11,7 @@ import { t } from './locales';
 import { icons } from '~/utils';
 import commands from './command';
 
-import { APIManager, ViewManager, NoticeManager, StateManager, BackupManager, SourceManager, InjectorManager, CoreManager, ExtractManager, AutoManager } from './manager';
+import { APIManager, ViewManager, NoticeManager, StateManager, BackupManager, SourceManager, TranslationMemoryManager, InjectorManager, CoreManager, ExtractManager, AutoManager } from './manager';
 import { info } from './utils';
 import { OBThemeManifest, Contributor, NameTranslationJSON } from '~/types';
 
@@ -47,6 +47,7 @@ export default class I18N extends Plugin {
     stateManager: StateManager; // [管理器] 状态管理器
     backupManager: BackupManager; // [管理器] 备份管理器
     sourceManager: SourceManager; // [管理器] 翻译源管理器 
+    translationMemory: TranslationMemoryManager; // [管理器] 翻译记忆管理器
     injectorManager: InjectorManager; // [管理器] 注入管理器 
     coreManager: CoreManager; // [管理器] 核心管理器
     extractManager: ExtractManager; // [管理器] 提取助手管理器1
@@ -212,6 +213,9 @@ export default class I18N extends Plugin {
         // @ts-ignore
         const i18nPluginDir = path.join(path.normalize(this.app.vault.adapter.getBasePath()), this.manifest.dir);
         this.sourceManager = new SourceManager(i18nPluginDir);
+
+        // [管理器] 翻译记忆管理器 (sidecar: translation-memory.json，生命周期独立于翻译源)
+        this.translationMemory = new TranslationMemoryManager(i18nPluginDir);
 
         // [管理器] 注入管理器
         this.injectorManager = new InjectorManager(this);

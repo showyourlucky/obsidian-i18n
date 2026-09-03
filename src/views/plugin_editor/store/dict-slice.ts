@@ -2,6 +2,7 @@ import { StateCreator } from 'zustand';
 import { RegexStore, DictSlice } from '../types';
 import { PluginTranslationFileDict } from '@/src/types';
 import { useGlobalStoreInstance } from '~/utils';
+import { collectLearnable } from '~/utils/translator/translation-memory';
 
 /**
  * AstItem → 持久化字典条目的序列化字段列表。
@@ -30,6 +31,37 @@ const toAstDictItem = (item: RegexStore['astItems'][number]) => ({
  */
 export const astDictKey = (item: { type: string; name?: string; source: string }): string =>
     `${item.type}|${item.name || ''}|${item.source}`;
+
+/**
+ * 把当前译文沉淀进翻译记忆 (sidecar: translation-memory.json)。
+ * 记忆按「插件 ID + 目标语言」分区（语言取 metadata.language，缺省退回全局设置），
+ * 跨文件共享——任意一个文件的译文学习后，其他文件提取到相同条目也能复用。
+ * 仅在设置开启且确实有可学习译文时写盘；异常只记日志，不阻断保存流程。
+ */
+const learnTranslationMemory = (
+    metadata: { plugin?: string; language?: string } | null | undefined,
+    astItems: readonly { type?: string; name?: string; source: string; target: string; ignored?: boolean }[],
+    regexItems: readonly { source: string; target: string; ignored?: boolean }[],
+): void => {
+    try {
+        const i18n = useGlobalStoreInstance.getState().i18n;
+        if (!i18n?.translationMemory || i18n.settings.translationMemoryEnabled === false) return;
+        if (!metadata?.plugin) return;
+
+        const language = metadata.language || i18n.settings.language;
+        if (!language) return;
+
+        const entries = [
+            ...collectLearnable(astItems),
+            ...collectLearnable(regexItems),
+        ];
+        if (entries.length > 0) {
+            i18n.translationMemory.upsertEntries(metadata.plugin, language, entries);
+        }
+    } catch (error) {
+        console.error('[Editor] 学习翻译记忆失败:', error);
+    }
+};
 
 /**
  * 把条目上的人工标记并回 per-file key 集合 (并集，不自减)。
@@ -117,6 +149,10 @@ export const createDictSlice: StateCreator<
     })),
 
     setCurrentFile: (file) => {
+        // 切换文件前，先把当前正在编辑的译文沉淀进翻译记忆
+        const { metadata, astItems: editingAstItems, regexItems: editingRegexItems } = get();
+        learnTranslationMemory(metadata, editingAstItems, editingRegexItems);
+
         set((state) => {
             const { currentFile, astItems, regexItems, dictData } = state;
             const newData = { ...dictData };
@@ -221,6 +257,10 @@ export const createDictSlice: StateCreator<
     },
 
     syncFileDictInfo: (file, newAstItems, newRegexItems) => {
+        // 保存前把有效译文沉淀进翻译记忆（增量提取回填的译文也会随保存固化）
+        const { metadata } = get();
+        learnTranslationMemory(metadata, newAstItems, newRegexItems);
+
         set((state) => {
             const newData = { ...state.dictData };
             newData[file] = {

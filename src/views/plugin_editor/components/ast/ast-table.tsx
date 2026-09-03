@@ -24,6 +24,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { AstItem, DiagnoseError } from '../../types';
 import { EDITOR_EVENTS } from '../../events';
 import { IgnoredBadge } from '../common/ignored-badge';
+import { MemoryBadge } from '../common/memory-badge';
 import { ASTTableEmptyState } from './ast-table-empty-state';
 import { useRegexStore } from '../../store';
 import { getSourceContext, createSourceContextCache } from '@/src/utils/common/source-context';
@@ -461,6 +462,7 @@ export const ASTTable = React.forwardRef<HTMLDivElement, Props>(({ data, editing
                     <div className="flex justify-center items-center gap-1 flex-wrap">
                         <VerdictBadge item={row.original} />
                         {row.original.ignored && <IgnoredBadge />}
+                        {row.original.tmHit && <MemoryBadge />}
                     </div>
                 ),
             },

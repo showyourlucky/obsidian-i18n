@@ -40,6 +40,7 @@ export interface I18nSettings {
     // 本地模式 (LDT)
     // ==============================
     automaticUpdate: boolean; // 是否在插件更新后自动应用旧版译文
+    translationMemoryEnabled: boolean; // 是否启用翻译记忆（同插件内按上下文复用历史译文）
 
     // ==============================
     // 语言模型翻译配置 (LLM)
@@ -257,6 +258,7 @@ export const DEFAULT_SETTINGS: I18nSettings = {
     // 本地模式 (LDT)
     // ==============================
     automaticUpdate: false,   // 默认关闭自动更新译文
+    translationMemoryEnabled: true,    // 默认启用翻译记忆（重复提取时自动复用历史译文）
 
     // ==============================
     // 语言模型翻译配置 (LLM)

@@ -11,6 +11,8 @@ export * from '~/utils/translator/core-ast-translator';
 export * from '~/utils/translator/core-regex-translator';
 // 通用翻译相关类型/工具（基础翻译逻辑、接口定义等）
 export * from '~/utils/translator/translation';
+// 翻译记忆纯逻辑（归一化、定长记忆键、可学习判定、回填）
+export * from '~/utils/translator/translation-memory';
 
 /**
  * 格式转换工具模块

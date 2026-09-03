@@ -14,6 +14,7 @@ import { RegexTableEmptyState } from './regex-table-empty-state';
 import { RegexItem, DiagnoseError } from '../../types';
 import { EDITOR_EVENTS } from '../../events';
 import { IgnoredBadge } from '../common/ignored-badge';
+import { MemoryBadge } from '../common/memory-badge';
 
 import {
     ColumnDef,
@@ -155,6 +156,7 @@ export const RegexTable = React.forwardRef<HTMLDivElement, Props>(({ data, editi
                 cell: ({ row }) => (
                     <div className="flex items-start gap-1.5 px-1 py-1 pl-4 cursor-text select-text">
                         {row.original.ignored && <IgnoredBadge />}
+                        {row.original.tmHit && <MemoryBadge />}
                         <div className="break-all whitespace-pre-wrap text-sm leading-relaxed">
                             {row.original.source}
                         </div>

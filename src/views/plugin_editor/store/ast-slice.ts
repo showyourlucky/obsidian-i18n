@@ -16,7 +16,8 @@ export const createAstSlice: StateCreator<RegexStore, [], [], AstSlice> = (set, 
 
     updateAstItem: (id: number, target: string) => set((state) => ({
         astItems: state.astItems.map(item =>
-            item.id === id ? { ...item, target } : item
+            // 人工改写译文后不再属于「翻译记忆原样回填」，清除运行时标记
+            item.id === id ? { ...item, target, tmHit: undefined } : item
         ),
     })),
 
@@ -26,7 +27,7 @@ export const createAstSlice: StateCreator<RegexStore, [], [], AstSlice> = (set, 
 
     resetAstItem: (id: number) => set((state) => ({
         astItems: state.astItems.map(item =>
-            item.id === id ? { ...item, target: item.source } : item
+            item.id === id ? { ...item, target: item.source, tmHit: undefined } : item
         ),
     })),
 
@@ -52,7 +53,11 @@ export const createAstSlice: StateCreator<RegexStore, [], [], AstSlice> = (set, 
             return {
                 astItems: state.astItems.map(item => {
                     const updates = updatesMap.get(item.id);
-                    return updates ? { ...item, ...updates } : item;
+                    if (!updates) return item;
+                    // 译文被更新（AI 重翻 / 人工改写）后不再属于「翻译记忆原样回填」
+                    return updates.target !== undefined
+                        ? { ...item, ...updates, tmHit: undefined }
+                        : { ...item, ...updates };
                 })
             };
         });
@@ -76,7 +81,7 @@ export const createAstSlice: StateCreator<RegexStore, [], [], AstSlice> = (set, 
         const idSet = new Set(ids);
         return {
             astItems: state.astItems.map(item =>
-                idSet.has(item.id) ? { ...item, target: item.source } : item
+                idSet.has(item.id) ? { ...item, target: item.source, tmHit: undefined } : item
             ),
         };
     }),

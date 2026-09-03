@@ -40,6 +40,8 @@ export default {
         LangDesc: "云端下载与 AI 翻译时默认使用的语言。",
         AutoSaveTitle: "自动保存",
         AutoSaveDesc: "在翻译编辑器中每隔一段时间自动保存修改，防止意外丢失。",
+        TranslationMemoryTitle: "翻译记忆",
+        TranslationMemoryDesc: "保存已确认的译文并记忆；同一插件再次提取到相同条目时自动复用历史译文，无需重复翻译。",
         AuthorTitle: "作者署名",
         AuthorDesc: "提取译文时自动附带的署名，留空则不署名。",
         AuthorPlaceholder: "例: Eondr",

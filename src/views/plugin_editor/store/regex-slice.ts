@@ -47,9 +47,13 @@ export const createRegexSlice: StateCreator<RegexStore, [], [], RegexSlice> = (s
                 syncIgnoredChange([{ id, ignored: updates.ignored }]);
             }
             set((state) => ({
-                regexItems: state.regexItems.map(item =>
-                    item.id === id ? { ...item, ...updates } : item
-                ),
+                regexItems: state.regexItems.map(item => {
+                    if (item.id !== id) return item;
+                    // 人工改写译文后不再属于「翻译记忆原样回填」，清除运行时标记
+                    return updates.target !== undefined
+                        ? { ...item, ...updates, tmHit: undefined }
+                        : { ...item, ...updates };
+                }),
             }));
         },
 
@@ -60,7 +64,10 @@ export const createRegexSlice: StateCreator<RegexStore, [], [], RegexSlice> = (s
                 return {
                     regexItems: state.regexItems.map(item => {
                         const updates = updatesMap.get(item.id);
-                        return updates ? { ...item, ...updates } : item;
+                        if (!updates) return item;
+                        return updates.target !== undefined
+                            ? { ...item, ...updates, tmHit: undefined }
+                            : { ...item, ...updates };
                     })
                 };
             });
@@ -75,7 +82,7 @@ export const createRegexSlice: StateCreator<RegexStore, [], [], RegexSlice> = (s
         resetRegexItem: (id: number) => {
             set((state) => ({
                 regexItems: state.regexItems.map(item =>
-                    item.id === id ? { ...item, target: item.source } : item
+                    item.id === id ? { ...item, target: item.source, tmHit: undefined } : item
                 ),
             }));
         },

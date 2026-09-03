@@ -5,6 +5,7 @@ export { ViewManager } from './view-manager';
 export { StateManager } from './state-manager';
 export { BackupManager } from './backup-manager';
 export { SourceManager } from './source-manager';
+export { TranslationMemoryManager } from './translation-memory';
 // 注入管理器
 export * from './injector';
 // 核心管理器

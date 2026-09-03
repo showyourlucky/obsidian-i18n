@@ -50,6 +50,42 @@ export const EMPTY_IGNORED_KEYS: IgnoredKeysStore = {
     plugins: {}
 };
 
+/**
+ * 翻译记忆 (Translation Memory) 的独立持久化存储 (sidecar: translation-memory.json)。
+ *
+ * 生命周期独立于翻译源：翻译源可被删除并全新提取，但「某条原文曾经被翻译成什么」是
+ * 已经花过成本 (AI 调用 / 人工校对) 的知识，必须比翻译源活得更久，因此单独落盘。
+ *
+ * 结构：插件 ID → 目标语言 → 记忆键 → 记忆条目。
+ * - 记忆键是定长哈希 (sha256 前 32 位)，由 `type|name|source` 上下文派生：原文可能极长
+ *   (SVG、模板字符串)，直接用原文做 JSON 键会让文件膨胀且难以读取，哈希保证键长恒定。
+ * - 条目不存原文全文：匹配只依赖记忆键，原文仅保留 preview 供人工排查，避免长文本在
+ *   键和值里各存一份；译文 target 必须存全文，否则长条目复用时会拿到残缺译文。
+ */
+export interface TranslationMemoryEntry {
+    /** AST 上下文类型 (ObjectProperty / CallExpression …)；Regex 条目为空串 */
+    type: string;
+    /** AST 上下文名 (属性键 / 函数名 …)；Regex 条目为空串 */
+    name: string;
+    /** 已确认译文，存全文以保证长文本可完整复用 */
+    target: string;
+    /** 原文预览 (截断)，仅供人工排查，不参与匹配 */
+    preview: string;
+    /** 写入时间，用于同键覆盖与容量淘汰 */
+    updatedAt: number;
+}
+
+export interface TranslationMemoryStore {
+    version: 1;
+    /** 插件 ID → 目标语言 → 记忆键(定长哈希) → 记忆条目 */
+    plugins: Record<string, Record<string, Record<string, TranslationMemoryEntry>>>;
+}
+
+export const EMPTY_TRANSLATION_MEMORY: TranslationMemoryStore = {
+    version: 1,
+    plugins: {}
+};
+
 export interface PluginTranslationV1Metadata {
     // 核心识别信息
     plugin: string;                 // 所属插件ID 

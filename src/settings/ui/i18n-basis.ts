@@ -70,6 +70,18 @@ export default class I18nBasis extends BaseSetting {
             );
 
         new Setting(this.containerEl)
+            .setName(t('Settings.Basis.TranslationMemoryTitle'))
+            .setDesc(t('Settings.Basis.TranslationMemoryDesc'))
+            .addToggle((cb) =>
+                cb
+                    .setValue(this.settings.translationMemoryEnabled)
+                    .onChange(async (value) => {
+                        this.settings.translationMemoryEnabled = value;
+                        await this.i18n.saveSettings();
+                    })
+            );
+
+        new Setting(this.containerEl)
             .setName(t('Settings.Basis.AuthorTitle'))
             .setDesc(t('Settings.Basis.AuthorDesc'))
             .addText(cb => cb

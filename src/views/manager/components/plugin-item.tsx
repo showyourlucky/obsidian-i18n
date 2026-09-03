@@ -5,8 +5,8 @@ import * as fs from 'fs-extra';
 import { useTranslation } from 'react-i18next';
 import { Settings, FolderOpen, Pen, FileOutput, XCircle, Loader2, MoreHorizontal, CloudDownload, Cloud } from 'lucide-react';
 import I18N from 'src/main';
-import { PluginTranslationV1 } from 'src/types';
-import { i18nOpen, AstTranslator, RegexTranslator, isValidPluginTranslationV1Format } from '../../../utils';
+import { PluginTranslationV1, PluginTranslationFileDict } from 'src/types';
+import { i18nOpen, AstTranslator, RegexTranslator, isValidPluginTranslationV1Format, applyTranslationMemory, buildMemoryIndex, collectLearnable } from '../../../utils';
 import { loadTranslationFile } from '../../../manager/io-manager';
 import { useGlobalStoreInstance } from '~/utils';
 import { EDITOR_VIEW_TYPE } from '../../../views';
@@ -153,14 +153,66 @@ export const PluginItem: React.FC<PluginItemProps> = React.memo(({ plugin, i18n,
             const mainStr = mainBuffer.toString();
             const manifestJSON = await fs.readJson(manifestDoc);
 
+            const memoryEnabled = !!i18n.translationMemory && i18n.settings.translationMemoryEnabled !== false;
+
+            // 提取前先把激活源的既有译文沉淀进翻译记忆：
+            // generatePlugin 全新生成不保留任何旧译文，不快照就会在覆盖落盘时永久丢失
+            if (sourceManager && memoryEnabled) {
+                try {
+                    const activePath = sourceManager.getActiveSourcePath(plugin.id);
+                    if (activePath && fs.existsSync(activePath)) {
+                        const oldTranslation = loadTranslationFile(activePath);
+                        const oldLanguage = oldTranslation?.metadata?.language || settings.language;
+                        if (oldTranslation?.dict && oldLanguage) {
+                            const entries = [];
+                            const dictByFile = oldTranslation.dict as Record<string, PluginTranslationFileDict>;
+                            for (const fileDict of Object.values(dictByFile)) {
+                                entries.push(...collectLearnable(fileDict?.ast ?? []));
+                                entries.push(...collectLearnable(fileDict?.regex ?? []));
+                            }
+                            if (entries.length > 0) {
+                                i18n.translationMemory.upsertEntries(plugin.id, oldLanguage, entries);
+                            }
+                        }
+                    }
+                } catch (memoryError) {
+                    // 快照学习失败不该阻断提取主流程
+                    console.error('[Manager] 学习翻译记忆失败:', memoryError);
+                }
+            }
+
             // 延时一下避免 UI 冻结感
             await new Promise(resolve => setTimeout(resolve, 0));
             const { generatePlugin } = await import('../../../utils');
             const translationJson = generatePlugin(plugin.version, manifestJSON, mainStr, settings.language, i18n.settings);
 
+            // 翻译记忆回填：新提取的条目按上下文复用历史译文，命中部分无需再走 AI 翻译
+            let memoryHitCount = 0;
+            if (memoryEnabled && settings.language) {
+                const memoryIndex = buildMemoryIndex(i18n.translationMemory.getPluginMemory(plugin.id, settings.language));
+                if (memoryIndex.size > 0) {
+                    for (const fileDict of Object.values(translationJson.dict)) {
+                        if (fileDict.ast?.length) {
+                            // mark: false——此处结果直接落盘翻译源，不能携带 tmHit 运行时标记
+                            const applied = applyTranslationMemory(fileDict.ast, memoryIndex, { mark: false });
+                            fileDict.ast = applied.items;
+                            memoryHitCount += applied.hitCount;
+                        }
+                        if (fileDict.regex?.length) {
+                            const applied = applyTranslationMemory(fileDict.regex, memoryIndex, { mark: false });
+                            fileDict.regex = applied.items;
+                            memoryHitCount += applied.hitCount;
+                        }
+                    }
+                }
+            }
+
             if (sourceManager) {
                 await sourceManager.extractAndSaveSource(plugin.id, translationJson, { title: plugin.name });
                 i18n.notice.successPrefix(t('Manager.Plugins.Notices.ExtractSuccess'), t('Manager.Plugins.Hints.ExtractSuccessDesc'));
+                if (memoryHitCount > 0) {
+                    i18n.notice.info(t('Editor.Hints.MemoryReusedCount', { count: memoryHitCount }));
+                }
             }
             refreshParent();
         } catch (error) {

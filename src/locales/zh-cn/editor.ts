@@ -160,7 +160,9 @@ export default {
         Translatable: "该翻",
         Untranslatable: "不该翻",
         Ignored: "待删",
-        IgnoredTip: "已标记为不需要翻译，待手动删除；标记错了可在「只看待删」中重置"
+        IgnoredTip: "已标记为不需要翻译，待手动删除；标记错了可在「只看待删」中重置",
+        Memory: "记忆",
+        MemoryTip: "译文来自翻译记忆的自动回填，可继续修改或重置"
     },
     Status: {
         ProcessingBatch: "正在翻译第 {{current}}/{{total}} 批...",
@@ -177,7 +179,8 @@ export default {
         ExtractSummary: "增量提取完成，新增 {{count}} 个条目",
         DiagnosisSuccess: "诊断完成：未发现导致语法错误的条目",
         NoItems: "无可翻译项",
-        NoNewItems: "未发现新的翻译条目"
+        NoNewItems: "未发现新的翻译条目",
+        MemoryReusedCount: "已复用 {{count}} 条翻译记忆"
     },
     Notices: {
         NoticePrefix: "编辑器",
