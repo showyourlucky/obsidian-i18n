@@ -12,7 +12,11 @@ export default class I18nAST extends BaseSetting {
         // ==============================
         new Setting(containerEl)
             .setName(t('Settings.Ast.ConfigHeader'))
-            .setHeading();
+            .setHeading()
+            .addExtraButton(cb => cb
+                .setIcon('rotate-ccw')
+                .setTooltip(t('Settings.Basis.ResetGroupTooltip'))
+                .onClick(async () => { await this.resetGroup(['astAssignments', 'astFunctions', 'astKeys']); }));
 
         // 变量赋值白名单
         new Setting(containerEl)
@@ -64,7 +68,11 @@ export default class I18nAST extends BaseSetting {
         // ==============================
         new Setting(containerEl)
             .setName(t('Settings.Ast.RegexHeader'))
-            .setHeading();
+            .setHeading()
+            .addExtraButton(cb => cb
+                .setIcon('rotate-ccw')
+                .setTooltip(t('Settings.Basis.ResetGroupTooltip'))
+                .onClick(async () => { await this.resetGroup(['astRejectRe', 'astValidRe', 'astNonTranslatableProps', 'astTranslatableProps']); }));
 
         // 排除正则列表
         new Setting(containerEl)
@@ -96,12 +104,46 @@ export default class I18nAST extends BaseSetting {
                 text.inputEl.style.width = '100%';
             });
 
+        // 非可译属性名
+        new Setting(containerEl)
+            .setName(t('Settings.Ast.NonTranslatablePropsTitle'))
+            .setDesc(t('Settings.Ast.NonTranslatablePropsDesc'))
+            .addTextArea(text => {
+                text.setValue((this.settings.astNonTranslatableProps || []).join('\n'))
+                    .setPlaceholder(t('Settings.Ast.NonTranslatablePropsPlaceholder'))
+                    .onChange(async (value) => {
+                        this.settings.astNonTranslatableProps = value.split('\n').map(s => s.trim()).filter(s => s !== '');
+                        await this.i18n.saveSettings();
+                    });
+                text.inputEl.rows = 3;
+                text.inputEl.style.width = '100%';
+            });
+
+        // 例外属性名
+        new Setting(containerEl)
+            .setName(t('Settings.Ast.TranslatablePropsTitle'))
+            .setDesc(t('Settings.Ast.TranslatablePropsDesc'))
+            .addTextArea(text => {
+                text.setValue((this.settings.astTranslatableProps || []).join('\n'))
+                    .setPlaceholder(t('Settings.Ast.TranslatablePropsPlaceholder'))
+                    .onChange(async (value) => {
+                        this.settings.astTranslatableProps = value.split('\n').map(s => s.trim()).filter(s => s !== '');
+                        await this.i18n.saveSettings();
+                    });
+                text.inputEl.rows = 2;
+                text.inputEl.style.width = '100%';
+            });
+
         // ==============================
         // 翻译安全策略
         // ==============================
         new Setting(containerEl)
             .setName(t('Settings.Ast.SafetyHeader'))
-            .setHeading();
+            .setHeading()
+            .addExtraButton(cb => cb
+                .setIcon('rotate-ccw')
+                .setTooltip(t('Settings.Basis.ResetGroupTooltip'))
+                .onClick(async () => { await this.resetGroup(['astStrictMatch']); }));
 
         new Setting(containerEl)
             .setName(t('Settings.Ast.StrictTitle'))
@@ -119,7 +161,11 @@ export default class I18nAST extends BaseSetting {
         // ==============================
         new Setting(containerEl)
             .setName(t('Settings.Ast.PromptHeader'))
-            .setHeading();
+            .setHeading()
+            .addExtraButton(cb => cb
+                .setIcon('rotate-ccw')
+                .setTooltip(t('Settings.Basis.ResetGroupTooltip'))
+                .onClick(async () => { await this.resetGroup(['llmAstPrompt']); }));
 
         // AST Prompt 配置
         const astPromptSetting = new Setting(containerEl)

@@ -89,6 +89,9 @@ export default {
         ResetBtn: "重置配置",
         ResetConfirm: "确定要重置所有插件配置吗？这将清除所有已保存的设置（包括 API Key、正则表达式等）。",
         ResetSuccess: "配置已重置",
+        ResetGroupTooltip: "恢复本组为默认值",
+        ResetGroupConfirm: "确定要将本组设置恢复为默认值吗？这会覆盖你在本组内的自定义内容，且不可撤销。",
+        ResetGroupSuccess: "已重置本组设置",
     },
     Re: {
         // ── 正则参数 ──
@@ -137,6 +140,13 @@ export default {
         ValidReTitle: "保留规则",
         ValidReDesc: "只有匹配到的文本才会被提取，其余全部忽略。",
         ValidPlaceholder: "一行一条保留正则",
+        // ── 非可译属性名 ──
+        NonTranslatablePropsTitle: "非可译属性名",
+        NonTranslatablePropsDesc: "这些对象属性的值一律视为机器取值（枚举、CSS、SVG、ARIA 状态），不进入翻译流程。用于补充内置规则未收录的插件私有属性名。",
+        NonTranslatablePropsPlaceholder: "一行一个属性名",
+        TranslatablePropsTitle: "例外属性名",
+        TranslatablePropsDesc: "优先级最高，可解除内置规则对上述属性名的排除。仅当你确认该属性的值确实是界面文案时再填——解除 cls、type、事件名这类结构属性会导致样式失效或交互静默损坏。",
+        TranslatablePropsPlaceholder: "一行一个属性名",
         // ── 翻译安全 ──
         SafetyHeader: "翻译安全",
         StrictTitle: "严格匹配模式",

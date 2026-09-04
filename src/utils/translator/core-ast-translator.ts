@@ -17,7 +17,8 @@ import { I18nSettings } from '../../settings/data';
 import {
     AST_DEFAULT_CONFIG, AST_DEFAULT_RULES,
     HARDCODED_WORDS, LOGIC_BINARY_OPERATORS, LOGIC_STRING_METHODS, EVENT_LISTENER_METHODS, DOM_EVENT_NAMES,
-    DOM_CREATE_SHORTHAND_ARGS, STRUCTURAL_KEYS, DOM_CREATE_STRUCTURAL_KEYS, FRAMEWORK_CREATE_FUNCS
+    DOM_CREATE_SHORTHAND_ARGS, STRUCTURAL_KEYS, DOM_CREATE_STRUCTURAL_KEYS, FRAMEWORK_CREATE_FUNCS,
+    isMachineValuedPropName, isFrameworkOnlyPropName
 } from './config';
 
 /**
@@ -72,6 +73,10 @@ export class AstTranslator {
     private settings: I18nSettings;
     private config: any;
     private contentRules: any;
+    /** 用户自定义的非可译属性名 (设置里逐行配置，折叠为小写) */
+    private userNonTranslatableProps: Set<string> = new Set();
+    /** 用户声明的例外属性名 (优先级最高，可解除内置黑名单，折叠为小写) */
+    private userTranslatableProps: Set<string> = new Set();
 
     constructor(settings: I18nSettings) {
         this.settings = settings;
@@ -98,6 +103,20 @@ export class AstTranslator {
                 }).filter(Boolean) as RegExp[]
                 : AST_DEFAULT_RULES.VALID_PATTERNS,
         };
+
+        // 用户自定义的非可译属性名：补充默认表未收录的插件私有名 (如 ext / KCn)
+        this.userNonTranslatableProps = new Set(
+            (this.settings?.astNonTranslatableProps || [])
+                .map((s: string) => (s || '').toLowerCase())
+                .filter(Boolean)
+        );
+
+        // 用户声明的例外属性名：内置黑名单的逃生口，优先级最高
+        this.userTranslatableProps = new Set(
+            (this.settings?.astTranslatableProps || [])
+                .map((s: string) => (s || '').toLowerCase())
+                .filter(Boolean)
+        );
     }
 
     // ====================================================================================================
@@ -870,7 +889,20 @@ export class AstTranslator {
      */
     private isStructuralKey(key: string, fnName?: string | null): boolean {
         const k = (key || '').toLowerCase();
+        // 用户声明的例外：优先级最高，直接放行并跳过后续所有内置规则。
+        // 内置黑名单必然存在误判 (如 status 在某些插件里就是文案)，这是唯一的逃生口。
+        if (this.userTranslatableProps.has(k)) return false;
         if (STRUCTURAL_KEYS.has(k)) return true;
+        // 用户自定义的非可译属性名：用于补充默认表未收录的插件私有名
+        if (this.userNonTranslatableProps.has(k)) return true;
+        // 一级：语义上确定为机器取值 (CSS 尺寸 / HTML 行为 / SVG 绘制 / CSS 类名 / ARIA 状态)。
+        // 任何上下文都成立——包括 isStructuralContext 的全文件扫描与 translate() 的替换路径。
+        // 传原始 key 而非小写 k：aria 驼峰归一化 (ariaHidden -> aria-hidden) 需要大小写边界。
+        if (isMachineValuedPropName(key)) return true;
+        // 二级：通常是组件枚举，但部分插件会用它们承载真实文案 ({ points: '积分' } / { status: '已连接' })。
+        // 只在框架创建函数的 props 深层提取路径生效 (本函数由该路径传入 fnName)，
+        // 不污染全局结构判定——否则已翻好的译文会在 translate() 里被静默跳过 (见 183 行)。
+        if (fnName && FRAMEWORK_CREATE_FUNCS.has(fnName) && isFrameworkOnlyPropName(k)) return true;
         // data-* 自定义属性 / dataset 成员
         if (/^data[-A-Z]/.test(key)) return true;
         // createEl('input', { name: 'group1' })：HTML name 属性是分组标识

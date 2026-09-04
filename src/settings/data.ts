@@ -208,6 +208,8 @@ export interface I18nSettings {
     astKeys: string[];        // 键名白名单
     astRejectRe: string[];   // 排除正则 (字符串形式)
     astValidRe: string[];    // 有效正则 (字符串形式)
+    astNonTranslatableProps: string[]; // 非可译属性名 (对象键，其值一律视为机器取值)
+    astTranslatableProps: string[]; // 例外属性名 (优先级最高，可解除内置黑名单对上述键的排除)
     astStrictMatch: boolean; // 严格匹配模式：禁用「仅按 source 文本」的宽松回退
 
     // ==============================
@@ -564,6 +566,8 @@ export const DEFAULT_SETTINGS: I18nSettings = {
     astKeys: AST_DEFAULT_CONFIG.keys,
     astRejectRe: REGEX_DEFAULT_CONFIG.rejectPatterns, // Regex defaults are used as strings for UI
     astValidRe: REGEX_DEFAULT_CONFIG.validPatterns,
+    astNonTranslatableProps: [], // 默认表未收录的插件私有属性名，由用户按需补充
+    astTranslatableProps: [], // 内置黑名单的逃生口：确认是文案时可在此放行
     astStrictMatch: false,   // 默认关闭严格匹配，保证既有翻译包的命中率
 
     // ==============================

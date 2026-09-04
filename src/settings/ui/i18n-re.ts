@@ -12,7 +12,11 @@ export default class I18nRE extends BaseSetting {
         // ==============================
         new Setting(containerEl)
             .setName(t('Settings.Re.ParamsHeader'))
-            .setHeading();
+            .setHeading()
+            .addExtraButton(cb => cb
+                .setIcon('rotate-ccw')
+                .setTooltip(t('Settings.Basis.ResetGroupTooltip'))
+                .onClick(async () => { await this.resetGroup(['reFlags', 'reLength']); }));
 
         // RE 标志
         new Setting(containerEl)
@@ -47,7 +51,11 @@ export default class I18nRE extends BaseSetting {
         // ==============================
         new Setting(containerEl)
             .setName(t('Settings.Re.DataHeader'))
-            .setHeading();
+            .setHeading()
+            .addExtraButton(cb => cb
+                .setIcon('rotate-ccw')
+                .setTooltip(t('Settings.Basis.ResetGroupTooltip'))
+                .onClick(async () => { await this.resetGroup(['reDatas']); }));
 
         new Setting(containerEl)
             .setName(t('Settings.Re.DataEditTitle'))
@@ -68,7 +76,11 @@ export default class I18nRE extends BaseSetting {
         // ==============================
         new Setting(containerEl)
             .setName(t('Settings.Re.RegexHeader'))
-            .setHeading();
+            .setHeading()
+            .addExtraButton(cb => cb
+                .setIcon('rotate-ccw')
+                .setTooltip(t('Settings.Basis.ResetGroupTooltip'))
+                .onClick(async () => { await this.resetGroup(['reRejectRe', 'reValidRe']); }));
 
         new Setting(containerEl)
             .setName(t('Settings.Re.RejectReTitle'))
@@ -103,7 +115,11 @@ export default class I18nRE extends BaseSetting {
         // ==============================
         new Setting(containerEl)
             .setName(t('Settings.Re.PromptHeader'))
-            .setHeading();
+            .setHeading()
+            .addExtraButton(cb => cb
+                .setIcon('rotate-ccw')
+                .setTooltip(t('Settings.Basis.ResetGroupTooltip'))
+                .onClick(async () => { await this.resetGroup(['llmRegexPrompt']); }));
 
         // Regex Prompt 配置
         const regexPromptSetting = new Setting(containerEl)
