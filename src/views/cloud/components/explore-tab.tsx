@@ -14,11 +14,11 @@ import { t } from '@/src/locales/index';
 import { ManifestEntry, getCloudFilePath } from '../types';
 import { SUPPORTED_LANGUAGES } from '~/constants/languages';
 import { ScrollArea } from '~/shadcn/ui/scroll-area';
-import { TranslationSource } from '~/types';
 import { Badge } from '~/shadcn/ui/badge';
 import { cn } from '~/shadcn/lib/utils';
 import { calculateChecksum } from '~/utils';
 import { MarkdownViewer } from './markdown-viewer';
+import { downloadCloudTranslation } from '../utils/download';
 
 type UpdateStatus = 'not_downloaded' | 'up_to_date' | 'update_available' | 'fork_available';
 
@@ -429,87 +429,7 @@ export const ExploreTab: React.FC = () => {
 
         setDownloadingId(entry.id);
         try {
-            // 1. 获取翻译文件内容 (使用 getFileContentWithFallback 支持大文件并避开 CDN 缓存或 403 问题)
-            const fileRes = await i18n.api.github.getFileContentWithFallback(owner, repo, getCloudFilePath(entry.id, entry.type));
-            if (!fileRes.state || !fileRes.data) {
-                const errorDetail = fileRes.isRateLimit ? t_i18n('Cloud.Hints.RateLimitTitle') : (fileRes.data?.message || fileRes.data || '');
-                throw new Error(`${t_i18n('Cloud.Errors.DownloadFail')}: ${errorDetail}`);
-            }
-
-            // getFileContentWithFallback 会自动解析 JSON 或返回文本
-            const content = typeof fileRes.data === 'string' ? JSON.parse(fileRes.data) : fileRes.data;
-            const manager = i18n.sourceManager;
-            if (!manager) {
-                throw new Error(t_i18n('Cloud.Status.Fetching')); // Or something more appropriate
-            }
-
-            // 2. 检查是否已存在同一云端条目（考虑到本地新建的翻译可能还没绑定 cloud，只校验 id）
-            const existingSource = manager.getAllSources().find(s => s.id === entry.id);
-
-            if (existingSource) {
-                // 如果 owner 不一致，触发 fork 覆盖确认。如果本地源没有 cloud 信息，也视作被覆盖
-                const isSameOwner = existingSource.cloud?.owner === owner && existingSource.cloud?.repo === repo;
-                if (!isSameOwner) {
-                    const confirmMsg = t_i18n('Cloud.Dialogs.ConfirmOverwrite', '', {
-                        owner: existingSource.cloud?.owner || t_i18n('Cloud.Status.Local'),
-                        newOwner: owner
-                    });
-                    if (!window.confirm(confirmMsg)) {
-                        setDownloadingId(null);
-                        return;
-                    }
-                }
-                // === 更新模式 ===
-                manager.saveSourceFile(existingSource.id, content);
-                const updatedSource: TranslationSource = {
-                    ...existingSource,
-                    origin: 'cloud',
-                    title: entry.title || existingSource.title,
-                    checksum: calculateChecksum(content),
-                    cloud: {
-                        owner,
-                        repo,
-                        hash: entry.hash,
-                    },
-                    updatedAt: Date.now(),
-                };
-                manager.saveSource(updatedSource);
-                i18n.notice.successPrefix(t_i18n('Cloud.Notices.UpdateSuccess'), t_i18n('Cloud.Tips.UpdatedItem', '', { title: updatedSource.title }));
-            } else {
-                // === 新建模式 ===
-                const sourceId = entry.id;
-                manager.saveSourceFile(sourceId, content);
-
-                const sourceInfo: TranslationSource = {
-                    id: sourceId,
-                    plugin: entry.plugin,
-                    title: entry.title || t_i18n('Common.Status.Unknown'),
-                    type: entry.type,
-                    origin: 'cloud',
-                    isActive: false,
-                    checksum: calculateChecksum(content),
-                    cloud: {
-                        owner,
-                        repo,
-                        hash: entry.hash,
-                    },
-                    updatedAt: Date.now(),
-                    createdAt: Date.now(),
-                };
-
-                manager.saveSource(sourceInfo);
-
-                if (!manager.getActiveSourceId(entry.plugin)) {
-                    manager.setActive(sourceId, true);
-                    i18n.notice.successPrefix(t_i18n('Cloud.Notices.DownloadSuccess'), t_i18n('Cloud.Tips.AddedAndActive', '', { title: sourceInfo.title }));
-                } else {
-                    i18n.notice.successPrefix(t_i18n('Cloud.Notices.DownloadSuccess'), t_i18n('Cloud.Tips.AddedSource', '', { title: sourceInfo.title }));
-                }
-            }
-
-        } catch (error) {
-            console.error(t_i18n('Cloud.Errors.DownloadFail'), error);
-            i18n.notice.errorPrefix(t_i18n('Cloud.Errors.DownloadFail'), `${error}`);
+            await downloadCloudTranslation({ i18n, owner, repo, entry, t: t_i18n });
         } finally {
             setDownloadingId(null);
         }

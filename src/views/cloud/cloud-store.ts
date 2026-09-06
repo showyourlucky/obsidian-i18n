@@ -2,8 +2,14 @@
  * 云端翻译管理状态管理
  */
 import { create } from 'zustand';
-import { CloudTabType, SearchParams, UploadFormData, LocalTranslationFile, ManifestEntry, RegistryItem, CommunityStatsData, OutdatedSource, BackupProgress, GithubUserInfo, GithubRepoInfo, ContributorEntry } from './types';
+import { CloudTabType, SearchParams, UploadFormData, LocalTranslationFile, ManifestEntry, RegistryItem, CommunityStatsData, OutdatedSource, BackupProgress, GithubUserInfo, GithubRepoInfo, ContributorEntry, GlobalSearchHit, RepoManifestCacheEntry } from './types';
 import { createSelectors } from '@/src/utils';
+
+/** 全局搜索时，单个仓库 metadata.json 的缓存有效期 (10 分钟) */
+const MANIFEST_CACHE_TTL = 10 * 60 * 1000;
+
+/** 全局搜索时，并发拉取 metadata.json 的批次大小 */
+const MANIFEST_FETCH_BATCH = 5;
 
 // Store 状态接口
 interface CloudState {
@@ -17,6 +23,22 @@ interface CloudState {
     communityStats: CommunityStatsData | null;
     communityLoaded: boolean;
     communityLoading: boolean;
+
+    // ===== 跨库全局搜索状态 =====
+    globalSearchQuery: string;
+    globalSearchHits: GlobalSearchHit[];
+    globalSearching: boolean;
+    /** 已针对当前 query 执行过检索 */
+    globalSearchRan: boolean;
+    /** 插件 ID 索引未命中，需要用户确认深度搜索（遍历全部仓库） */
+    globalSearchUnindexed: boolean;
+    /** 全局搜索因 GitHub 限流而中止 */
+    globalSearchRateLimited: boolean;
+    globalSearchProgress: { current: number; total: number };
+    /** 检索序号：每次发起检索自增，用于让仍在途的旧检索结果作废 */
+    globalSearchSeq: number;
+    /** 各仓库 metadata.json 的会话缓存，避免重复请求 */
+    manifestCache: Record<string, RepoManifestCacheEntry>;
 
     // ===== 贡献者鸣谢状态 =====
     contributors: ContributorEntry[];
@@ -84,6 +106,11 @@ interface CloudActions {
     setCommunityStats: (stats: CommunityStatsData | null) => void;
     setCommunityLoaded: (loaded: boolean) => void;
     setCommunityLoading: (loading: boolean) => void;
+
+    // 跨库全局搜索
+    setGlobalSearchQuery: (query: string) => void;
+    clearGlobalSearch: () => void;
+    searchGlobalPlugins: (i18n: any, query: string, options?: { deep?: boolean; language?: string }) => Promise<void>;
 
     // 个人仓库
     setRepoDataLoaded: (loaded: boolean) => void;
@@ -175,6 +202,16 @@ const initialState: CloudState = {
     communityLoaded: false,
     communityLoading: false,
 
+    globalSearchQuery: '',
+    globalSearchHits: [],
+    globalSearching: false,
+    globalSearchRan: false,
+    globalSearchUnindexed: false,
+    globalSearchRateLimited: false,
+    globalSearchProgress: { current: 0, total: 0 },
+    globalSearchSeq: 0,
+    manifestCache: {},
+
     contributors: [],
     contributorsLoaded: false,
 
@@ -242,6 +279,201 @@ const useCloudStoreBase = create<CloudState & CloudActions>()((set, get) => ({
     setCommunityStats: (communityStats) => set({ communityStats }),
     setCommunityLoaded: (communityLoaded) => set({ communityLoaded }),
     setCommunityLoading: (communityLoading) => set({ communityLoading }),
+
+    // 跨库全局搜索
+    setGlobalSearchQuery: (query) => set({ globalSearchQuery: query }),
+    clearGlobalSearch: () => set((state) => ({
+        globalSearchSeq: state.globalSearchSeq + 1,
+        globalSearchQuery: '',
+        globalSearchHits: [],
+        globalSearching: false,
+        globalSearchRan: false,
+        globalSearchUnindexed: false,
+        globalSearchRateLimited: false,
+        globalSearchProgress: { current: 0, total: 0 },
+    })),
+
+    searchGlobalPlugins: async (i18n, query, options) => {
+        const q = (query || '').trim().toLowerCase();
+
+        // 序号守卫：任何一次新检索（包括空查询）都会让仍在途的旧检索结果作废，
+        // 保证界面永远只显示"最新一次检索"的结果，避免旧结果覆盖新结果
+        const seq = get().globalSearchSeq + 1;
+
+        // 空查询：直接回到初始态
+        if (!q) {
+            set({
+                globalSearchSeq: seq,
+                globalSearchHits: [],
+                globalSearching: false,
+                globalSearchRan: false,
+                globalSearchUnindexed: false,
+                globalSearchRateLimited: false,
+                globalSearchProgress: { current: 0, total: 0 },
+            });
+            return;
+        }
+
+        const { communityRegistry, communityStats, manifestCache } = get();
+        if (communityRegistry.length === 0) {
+            set({ globalSearchSeq: seq, globalSearching: false, globalSearchRan: true, globalSearchHits: [] });
+            return;
+        }
+
+        set({ globalSearchSeq: seq, globalSearching: true, globalSearchRan: true, globalSearchRateLimited: false, globalSearchProgress: { current: 0, total: 0 } });
+
+        // 过期判定：一旦有更新的检索发起，本次检索即视为过期
+        const isStale = () => get().globalSearchSeq !== seq;
+
+        try {
+            const repos = communityStats?.repos || {};
+            const allAddresses = communityRegistry.map((item) => item.repoAddress);
+
+            // 1) 先用 stats.json 里已有的 pluginIds 索引做零成本预筛（不消耗 API 请求）
+            const indexed = communityRegistry.filter((item) => {
+                const ids = repos[item.repoAddress]?.pluginIds;
+                return Array.isArray(ids) && ids.some((id) => String(id).toLowerCase().includes(q));
+            });
+
+            // 索引未命中时，只可能是标题/别名类匹配，需要各仓库的目录文件。
+            // 若全部仓库的目录缓存仍然有效，直接走本地匹配，无需请求也无需用户确认
+            const now = Date.now();
+            const allCacheWarm = allAddresses.length > 0 && allAddresses.every((address) => {
+                const cached = manifestCache[address];
+                return cached && now - cached.fetchedAt <= MANIFEST_CACHE_TTL;
+            });
+
+            // 索引未命中且缓存未预热 → 交给用户确认后再发起深度搜索
+            const unindexed = indexed.length === 0;
+            if (unindexed && !options?.deep && !allCacheWarm) {
+                if (isStale()) return;
+                set({
+                    globalSearchHits: [],
+                    globalSearchUnindexed: true,
+                    globalSearching: false,
+                    globalSearchProgress: { current: 0, total: 0 },
+                });
+                return;
+            }
+
+            const targets = unindexed ? allAddresses : indexed.map((item) => item.repoAddress);
+
+            // 2) 拉取候选仓库的 metadata.json（带会话缓存 + 并发限流）
+            const needFetch = targets.filter((address) => {
+                const cached = manifestCache[address];
+                return !cached || now - cached.fetchedAt > MANIFEST_CACHE_TTL;
+            });
+
+            const nextCache: Record<string, RepoManifestCacheEntry> = {};
+            let finished = 0;
+            let rateLimited = false;
+            set({ globalSearchProgress: { current: 0, total: needFetch.length } });
+
+            for (let i = 0; i < needFetch.length; i += MANIFEST_FETCH_BATCH) {
+                // 已有更新的检索发起，剩余请求没必要继续消耗 API 额度
+                if (isStale()) break;
+                const batch = needFetch.slice(i, i + MANIFEST_FETCH_BATCH);
+                await Promise.all(batch.map(async (address) => {
+                    const [owner, repo] = address.split('/');
+                    if (!owner || !repo) return;
+                    try {
+                        const res = await i18n.api.github.getFileContentWithFallback(owner, repo, 'metadata.json');
+                        if (res.isRateLimit) {
+                            // GitHub 限流：本轮检索已无法拿到完整结果，标记后立即放弃剩余仓库
+                            rateLimited = true;
+                            return;
+                        }
+                        if (res.state && Array.isArray(res.data)) {
+                            nextCache[address] = { entries: res.data as ManifestEntry[], fetchedAt: Date.now() };
+                        }
+                    } catch (error) {
+                        console.error(`[GlobalSearch] failed to fetch metadata.json from ${address}`, error);
+                    } finally {
+                        finished += 1;
+                        if (!isStale()) {
+                            set({ globalSearchProgress: { current: finished, total: needFetch.length } });
+                        }
+                    }
+                }));
+                // 批次之间留出间隔，降低触发 GitHub 速率限制的概率
+                if (i + MANIFEST_FETCH_BATCH < needFetch.length) {
+                    await new Promise((resolve) => setTimeout(resolve, 300));
+                }
+            }
+
+            // 回写缓存：与检索结果解耦——即使本次检索已过期作废，抓到的目录数据依然有效，照样落袋，
+            // 避免用户改个关键词就丢弃整批已抓取结果、重新烧一遍 GitHub API 额度
+            const mergedCache: Record<string, RepoManifestCacheEntry> = { ...get().manifestCache, ...nextCache };
+            if (Object.keys(nextCache).length > 0) {
+                set({ manifestCache: mergedCache });
+            }
+
+            // 限流中止：与其展示"N 条匹配"的残缺结果误导用户，不如明确告知限流，
+            // 已抓到的部分数据已在上面落袋，重试时不会再消耗这部分额度
+            if (rateLimited) {
+                if (isStale()) return;
+                console.warn('[GlobalSearch] aborted: GitHub rate limited');
+                set({
+                    globalSearchHits: [],
+                    globalSearching: false,
+                    globalSearchRateLimited: true,
+                    globalSearchProgress: { current: 0, total: 0 },
+                });
+                return;
+            }
+
+            // 只有最新一次检索才继续匹配并写入结果，旧检索到此作废
+            if (isStale()) return;
+
+            // 3) 在候选仓库的目录中匹配插件 ID / 标题（并按语种过滤）
+            const language = options?.language;
+            const hits: GlobalSearchHit[] = [];
+            for (const address of targets) {
+                const cached = mergedCache[address];
+                if (!cached) continue;
+                for (const entry of cached.entries) {
+                    if (language && language !== 'all' && entry.language !== language) continue;
+                    const matchId = entry.plugin?.toLowerCase().includes(q);
+                    const matchTitle = entry.title?.toLowerCase().includes(q);
+                    if (matchId || matchTitle) {
+                        hits.push({ repoAddress: address, entry });
+                    }
+                }
+            }
+
+            // 4) 排序：官方/精选仓库优先 → 星标高 → 最近更新
+            const registryMeta = new Map(communityRegistry.map((item) => [item.repoAddress, item]));
+            const weightOf = (address: string) => {
+                const meta = registryMeta.get(address);
+                return (meta?.isOfficial ? 2 : 0) + (meta?.isFeatured ? 1 : 0);
+            };
+
+            hits.sort((a, b) => {
+                const wa = weightOf(a.repoAddress);
+                const wb = weightOf(b.repoAddress);
+                if (wa !== wb) return wb - wa;
+
+                const sa = repos[a.repoAddress]?.stars || 0;
+                const sb = repos[b.repoAddress]?.stars || 0;
+                if (sa !== sb) return sb - sa;
+
+                return (b.entry.updated_at || '').localeCompare(a.entry.updated_at || '');
+            });
+
+            // 只有最新一次检索才允许写入结果，旧检索到此作废
+            if (isStale()) return;
+            set({
+                globalSearchHits: hits,
+                globalSearchUnindexed: false,
+                globalSearching: false,
+            });
+        } catch (error) {
+            console.error('[GlobalSearch] search failed', error);
+            if (!isStale()) {
+                set({ globalSearching: false });
+            }
+        }
+    },
 
     // 个人仓库
     setRepoDataLoaded: (repoDataLoaded) => set({ repoDataLoaded }),
@@ -496,6 +728,7 @@ const useCloudStoreBase = create<CloudState & CloudActions>()((set, get) => ({
         communityRegistry: state.communityRegistry,
         communityStats: state.communityStats,
         communityLoaded: state.communityLoaded,
+        manifestCache: state.manifestCache,
         outdatedSources: state.outdatedSources,
         contributors: state.contributors,
         contributorsLoaded: state.contributorsLoaded,

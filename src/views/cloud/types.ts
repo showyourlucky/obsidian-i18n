@@ -87,6 +87,20 @@ export interface ManifestEntry {
     type: 'plugin' | 'theme';   // 翻译目标类型
 }
 
+// ========== 跨库全局搜索（全量检索某个插件在哪些翻译库存在） ==========
+
+/** 单个仓库 metadata.json 的本地缓存条目 */
+export interface RepoManifestCacheEntry {
+    entries: ManifestEntry[];
+    fetchedAt: number;
+}
+
+/** 全局搜索命中项：一条云端译文 + 它所属的仓库 */
+export interface GlobalSearchHit {
+    repoAddress: string;        // owner/repo
+    entry: ManifestEntry;       // 命中的 metadata.json 条目
+}
+
 // 社区索引条目（registry.json 中的单条记录）
 export interface RegistryItem {
     repoAddress: string;        // owner/repo 格式

@@ -31,7 +31,8 @@ export default {
         CreateNewRepo: "创建新仓库",
         Delete: "删除",
         Logout: "退出登录",
-        ResumeLastBackup: "恢复上次备份"
+        ResumeLastBackup: "恢复上次备份",
+        DeepSearch: "全库深度搜索"
     },
     Status: {
         Published: "已发布",
@@ -259,7 +260,16 @@ export default {
         RecommendReason: "推荐理由",
         MasterTranslator: "翻译巨匠",
         RisingStar: "社区新星",
-        LegendaryRepo: "万众瞩目"
+        LegendaryRepo: "万众瞩目",
+        // 跨库全局搜索
+        SearchScopeRepos: "翻译库",
+        SearchScopePlugins: "插件",
+        SearchScopeReposTip: "按仓库名 / 作者 / 描述搜索翻译库",
+        SearchScopePluginsTip: "跨全部翻译库检索某个插件的译文",
+        GlobalSearchResultCount: "条匹配的译文",
+        Installed: "已安装",
+        AdaptedVersion: "适配",
+        TranslationVersion: "译"
     },
     Placeholders: {
         RepoName: "例如: my-obsidian-i18n-resources",
@@ -271,7 +281,8 @@ export default {
         SearchRepo: "搜索仓库、作者或描述...",
         Repo: "GitHub 仓库 (owner/repo)",
         SearchPlugins: "快捷搜索当前列表...",
-        SearchDiff: "搜索差异记录..."
+        SearchDiff: "搜索差异记录...",
+        SearchPluginGlobal: "搜索插件 ID 或名称（跨全部翻译库）..."
     },
     Dialogs: {
         ConfirmUpdateAll: "确定要更新这 {{count}} 个翻译吗？",
@@ -354,7 +365,14 @@ export default {
         GoToSettings: "前往设置",
         RateLimitTitle: "GitHub 访问受限",
         RateLimitDesc: "由于 GitHub 的匿名访问频率限制（每小时 60 次），您目前的访问已达上限。请在设置中配置 GitHub Token 以获得稳定不限速的体验。",
-        RateLimitGuide: "配置 Token 即可解决"
+        RateLimitGuide: "配置 Token 即可解决",
+        // 跨库全局搜索
+        GlobalSearchProgress: "正在检索 {{current}}/{{total}} 个翻译库...",
+        GlobalSearchUnindexed: "云端索引中未匹配到「{{query}}」",
+        GlobalSearchUnindexedDesc: "云端索引仅记录插件 ID。若要按插件名称检索，可执行全库深度搜索，将遍历全部 {{count}} 个翻译库的目录文件。这会消耗较多 GitHub API 请求额度，建议配置 Token 后使用。",
+        NoMatchingPlugins: "没有找到匹配的插件译文",
+        GlobalSearchIdle: "输入插件 ID 或名称，开始跨库检索",
+        GlobalSearchTip: "直接输入插件 ID（如 dataview）即可命中云端索引，无需额外请求；已检索过的仓库目录会在 10 分钟内缓存复用。"
     },
     Notices: {
         UploadSuccess: "上传成功",

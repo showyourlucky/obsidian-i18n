@@ -16,6 +16,7 @@ import { ScrollArea } from '@/src/shadcn/ui/scroll-area';
 import { Badge } from '@/src/shadcn/ui/badge';
 import { cn } from '@/src/shadcn/lib/utils';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/src/shadcn/ui/collapsible';
+import { GlobalPluginSearch } from './global-plugin-search';
 
 // ========== 排行榜数据类型（用于渲染）==========
 interface LeaderboardRepo {
@@ -40,9 +41,14 @@ export const CommunityTab: React.FC = () => {
     const fetchCommunityRegistry = useCloudStore.use.fetchCommunityRegistry();
     const setCurrentTab = useCloudStore.use.setCurrentTab();
     const setTargetRepoAddress = useCloudStore.use.setTargetRepoAddress();
+    const searchGlobalPlugins = useCloudStore.use.searchGlobalPlugins();
+    const setGlobalSearchQuery = useCloudStore.use.setGlobalSearchQuery();
+    const globalSearchHits = useCloudStore.use.globalSearchHits();
 
     const [searchQuery, setSearchQuery] = useState('');
     const [filterLanguage, setFilterLanguage] = useState('all');
+    // 搜索作用域：repos = 搜索翻译库；plugins = 跨全部翻译库搜索插件译文
+    const [searchScope, setSearchScope] = useState<'repos' | 'plugins'>('repos');
 
     // 排行榜折叠状态
     const [reposOpen, setReposOpen] = useState(true);
@@ -184,6 +190,25 @@ export const CommunityTab: React.FC = () => {
                 return (statsB?.activityScore || 0) - (statsA?.activityScore || 0);
             });
     }, [communityRegistry, communityStats, searchQuery, filterLanguage]);
+
+    // 跨库全局搜索：输入防抖后自动检索
+    React.useEffect(() => {
+        if (searchScope !== 'plugins') return;
+
+        setGlobalSearchQuery(searchQuery);
+        const timer = setTimeout(() => {
+            searchGlobalPlugins(i18n, searchQuery, { language: filterLanguage });
+        }, 350);
+
+        return () => clearTimeout(timer);
+    }, [searchScope, searchQuery, filterLanguage, i18n, searchGlobalPlugins, setGlobalSearchQuery]);
+
+    // 切回「翻译库」作用域时，作废在途检索并清空结果，避免下次切回直接看到旧数据
+    React.useEffect(() => {
+        if (searchScope === 'repos') {
+            useCloudStore.getState().clearGlobalSearch();
+        }
+    }, [searchScope]);
 
 
 
@@ -640,11 +665,43 @@ export const CommunityTab: React.FC = () => {
 
                     {/* 右侧：过滤与操作组件 */}
                     <div className="flex items-center gap-2">
+                        {/* 搜索作用域切换：翻译库 / 插件 */}
+                        <div className="flex items-center bg-muted/30 border border-border/40 rounded-md h-8 p-0.5 shadow-sm shrink-0">
+                            <button
+                                onClick={() => setSearchScope('repos')}
+                                className={cn(
+                                    "flex items-center gap-1 px-2.5 h-7 rounded text-[11px] font-bold transition-all",
+                                    searchScope === 'repos'
+                                        ? "bg-background text-primary shadow-sm"
+                                        : "text-muted-foreground hover:text-foreground"
+                                )}
+                                title={t('Cloud.Labels.SearchScopeReposTip')}
+                            >
+                                <Library className="w-3 h-3" />
+                                {t('Cloud.Labels.SearchScopeRepos')}
+                            </button>
+                            <button
+                                onClick={() => setSearchScope('plugins')}
+                                className={cn(
+                                    "flex items-center gap-1 px-2.5 h-7 rounded text-[11px] font-bold transition-all",
+                                    searchScope === 'plugins'
+                                        ? "bg-background text-primary shadow-sm"
+                                        : "text-muted-foreground hover:text-foreground"
+                                )}
+                                title={t('Cloud.Labels.SearchScopePluginsTip')}
+                            >
+                                <Layers className="w-3 h-3" />
+                                {t('Cloud.Labels.SearchScopePlugins')}
+                            </button>
+                        </div>
+
                         {/* 搜索 */}
-                        <div className="relative group w-48">
+                        <div className={cn("relative group", searchScope === 'plugins' ? "w-56" : "w-48")}>
                             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground group-focus-within:text-primary transition-colors" />
                             <Input
-                                placeholder={t_i18n('Cloud.Placeholders.SearchRepo')}
+                                placeholder={searchScope === 'plugins'
+                                    ? t_i18n('Cloud.Placeholders.SearchPluginGlobal')
+                                    : t_i18n('Cloud.Placeholders.SearchRepo')}
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
                                 className="pl-8 h-8 text-[11px] bg-muted/20 border-border/40 focus:border-primary/40 focus:ring-1 focus:ring-primary/20 shadow-sm transition-all"
@@ -669,7 +726,7 @@ export const CommunityTab: React.FC = () => {
                         {/* 当前结果计数和刷新合并 */}
                         <div className="flex items-center bg-muted/30 border border-border/40 rounded-md h-8 shadow-sm">
                             <div className="flex items-center justify-center px-2.5 h-full text-[10px] font-mono font-medium text-muted-foreground border-r border-border/40" title="当前筛选结果数">
-                                {filteredItems.length}
+                                {searchScope === 'plugins' ? globalSearchHits.length : filteredItems.length}
                             </div>
                             <Button
                                 variant="ghost"
@@ -686,13 +743,17 @@ export const CommunityTab: React.FC = () => {
 
 
 
-                {/* 卡片网格 */}
-                <CommunityReposList
-                    filteredItems={filteredItems}
-                    communityStats={communityStats}
-                    handleViewRepo={handleViewRepo}
-                    t={t}
-                />
+                {/* 结果区：按搜索作用域切换「翻译库卡片」/「跨库插件检索」 */}
+                {searchScope === 'plugins' ? (
+                    <GlobalPluginSearch onViewRepo={handleViewRepo} filterLanguage={filterLanguage} />
+                ) : (
+                    <CommunityReposList
+                        filteredItems={filteredItems}
+                        communityStats={communityStats}
+                        handleViewRepo={handleViewRepo}
+                        t={t}
+                    />
+                )}
             </main>
         </div>
     );
