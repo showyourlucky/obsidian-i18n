@@ -1,5 +1,5 @@
 import { StateCreator } from 'zustand';
-import { RegexStore, DictSlice } from '../types';
+import { RegexStore, DictSlice, sourceCacheKey } from '../types';
 import { PluginTranslationFileDict } from '@/src/types';
 import { useGlobalStoreInstance } from '~/utils';
 import { collectLearnable } from '~/utils/translator/translation-memory';
@@ -135,18 +135,21 @@ export const createDictSlice: StateCreator<
     searchQuery: '',
     sourceCache: {},
 
-    setDictData: (data) => set({ dictData: data }),
+    // 加载新的翻译源时一并清空源码缓存：上一个源/插件的源码不能参与新源的定位
+    setDictData: (data) => set({ dictData: data, sourceCache: {} }),
     setSearchQuery: (query) => set({ searchQuery: query }),
-    setSourceCache: (file, code, fingerprint) => set(state => ({
+    setSourceCache: (pluginId, file, code, origin) => set(state => ({
         sourceCache: {
             ...state.sourceCache,
-            [file]: {
+            [sourceCacheKey(pluginId, file)]: {
                 code,
-                mtimeMs: fingerprint?.mtimeMs ?? null,
-                size: fingerprint?.size ?? 0
+                sourcePath: origin?.path ?? null,
+                mtimeMs: origin?.fingerprint?.mtimeMs ?? null,
+                size: origin?.fingerprint?.size ?? 0
             }
         }
     })),
+    clearSourceCache: () => set({ sourceCache: {} }),
 
     setCurrentFile: (file) => {
         // 切换文件前，先把当前正在编辑的译文沉淀进翻译记忆
@@ -205,7 +208,7 @@ export const createDictSlice: StateCreator<
 
     deleteFile: (file) => {
         set((state) => {
-            const { dictData, currentFile, astItems, regexItems, sourceCache } = state;
+            const { dictData, currentFile, astItems, regexItems, sourceCache, metadata } = state;
             if (!dictData[file]) return state;
 
             const newData = { ...dictData };
@@ -224,7 +227,7 @@ export const createDictSlice: StateCreator<
 
             // 3. 同时也从源码缓存中移除
             const newSourceCache = { ...sourceCache };
-            delete newSourceCache[file];
+            delete newSourceCache[sourceCacheKey(metadata?.plugin ?? '', file)];
 
             let nextState: Partial<RegexStore> = {
                 dictData: newData,

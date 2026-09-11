@@ -12,7 +12,7 @@ import { Save, Loader2, Plus, Trash2, ChevronDown, Folder, File, Info, Calendar,
 import { useRegexStore } from './store';
 import { astDictKey } from './store/dict-slice';
 
-import { EditorProps, DiagnoseError, SourceFingerprint } from './types';
+import { EditorProps, DiagnoseError, SourceFingerprint, SourceOrigin, sourceCacheKey } from './types';
 import { EDITOR_EVENTS } from './events';
 import { RegexEditor, AstEditor } from '.';
 
@@ -494,37 +494,42 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
             console.warn('[Editor] 解析目标文件路径失败', e);
         }
 
-        // 1. 内存缓存优先：命中且磁盘指纹未变则直接返回，避免重复读盘
-        const cached = sourceCache[currentFile];
-        if (cached) {
-            const fp = targetFilePath ? readFileFingerprint(targetFilePath) : null;
-            // mtimeMs 为 null 的条目来自备份等无磁盘对应物的来源，不做失效校验
-            const stale = cached.mtimeMs != null
-                && (!fp || fp.mtimeMs !== cached.mtimeMs || fp.size !== cached.size);
-            if (!stale) return { code: cached.code, currentFile, pluginId };
-            if (fp) console.debug(`[Editor] 源码已变更 (${currentFile})，丢弃缓存重新取源`);
+        // 1. 内存缓存优先：命中且来源文件指纹未变则直接返回，避免重复读盘。
+        //    缓存键带 pluginId：同名 main.js 在不同插件间绝不能互相复用。
+        //    来源路径/指纹缺失（如旧条目）一律视为过期——宁可多读一次盘，不可拿错源码去定位。
+        const cached = sourceCache[sourceCacheKey(pluginId, currentFile)];
+        if (cached?.sourcePath && cached.mtimeMs != null) {
+            const fp = readFileFingerprint(cached.sourcePath);
+            if (fp && fp.mtimeMs === cached.mtimeMs && fp.size === cached.size) {
+                return { code: cached.code, currentFile, pluginId };
+            }
+            console.debug(`[Editor] 源码已变更 (${currentFile})，丢弃缓存重新取源`);
         }
 
         const isApplied = !!i18n.stateManager.getPluginState(pluginId)?.isApplied;
         let code = '';
-        let fingerprint: SourceFingerprint | null = null;
+        let origin: SourceOrigin | null = null;
 
         // 2. 未应用时磁盘上的文件就是原始代码
-        if (!code && !isApplied && targetFilePath) {
+        if (!isApplied && targetFilePath) {
             try {
                 if (fs.existsSync(targetFilePath)) {
                     code = fs.readFileSync(targetFilePath, 'utf8');
-                    fingerprint = readFileFingerprint(targetFilePath);
+                    origin = { path: targetFilePath, fingerprint: readFileFingerprint(targetFilePath) };
                 }
             } catch (e) {
                 console.warn("Failed to read original source from disk, falling back to backup.", e);
             }
         }
 
-        // 3. 回退到备份（备份内容无磁盘对应物，不记指纹，不做失效校验）
+        // 3. 回退到备份：已应用插件在磁盘上看到的是译文版，只有备份才是原始代码。
+        //    记录备份文件自身的指纹，备份被重建（插件更新/重新应用）时缓存随之失效。
         if (!code) {
             code = (await i18n.backupManager.getBackupContent(pluginId, currentFile)) || '';
-            fingerprint = null;
+            if (code) {
+                const backupPath = i18n.backupManager.getBackupFilePath(pluginId, currentFile);
+                origin = { path: backupPath, fingerprint: backupPath ? readFileFingerprint(backupPath) : null };
+            }
         }
 
         if (!code) {
@@ -532,7 +537,7 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
             return null;
         }
 
-        setSourceCache(currentFile, code, fingerprint);
+        setSourceCache(pluginId, currentFile, code, origin);
         return { code, currentFile, pluginId };
     }, [i18n, notice, t]);
 
@@ -1444,5 +1449,7 @@ export class EditorView extends ItemView {
 
         this.root?.unmount();
         this.shadowRoot?.empty();
+        // 源码缓存动辄数 MB（minified main.js），关闭编辑器时释放，避免长驻内存
+        useRegexStore.getState().clearSourceCache();
     }
 }

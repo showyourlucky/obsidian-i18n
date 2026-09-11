@@ -164,6 +164,21 @@ export class BackupManager {
     }
 
     /**
+     * 获取备份文件在磁盘上的路径 (无论是否存在)。
+     * 用于对备份内容做指纹校验：备份被重建时 mtime 会变，据此判定缓存是否过期。
+     */
+    public getBackupFilePath(pluginId: string, file: string): string | null {
+        const backupPath = path.join(this.getPluginBackupDir(pluginId), `${file}.gz`);
+        if (fs.existsSync(backupPath)) return backupPath;
+        // 兼容单文件老版本 (仅限 main.js)
+        if (file === 'main.js') {
+            const legacyPath = this.getLegacyBackupPath(pluginId);
+            if (fs.existsSync(legacyPath)) return legacyPath;
+        }
+        return null;
+    }
+
+    /**
      * 获取备份文件内容 (自动解压)
      */
     public async getBackupContent(pluginId: string, file: string): Promise<string | null> {

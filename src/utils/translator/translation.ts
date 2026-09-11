@@ -169,18 +169,42 @@ export function mergeAstItems(existingItems: PluginTranslationV1Ast[], newItems:
         mergedMap.set(key, { ...item });
     });
 
-    // 2. 遍历新项，如果不存在则添加
+    // 2. 遍历新项：不存在则新增，已存在则保留人工数据、刷新源码位置
     newItems.forEach(newItem => {
         const key = `${newItem.type}|${newItem.name || ''}|${newItem.source}`;
-        if (!mergedMap.has(key)) {
+        const existing = mergedMap.get(key);
+        if (!existing) {
             mergedMap.set(key, { ...newItem });
-        } else {
-            // 如果已存在，可以选择性更新。增量提取通常保留已有译文 (target)
-            // 这里我们不做任何操作，因为 Map 中已经有了对应的项 (包含已翻译的 target)
+            return;
         }
+        mergedMap.set(key, refreshSourceDerivedFields(existing, newItem));
     });
 
     return Array.from(mergedMap.values());
+}
+
+/**
+ * 用新提取的值刷新旧条目「由源码推导」的字段，保留其余字段（译文、标记、AI 判定）。
+ *
+ * 不刷新时旧条目的 start/end 会永远停留在旧版本源码的坐标上，
+ * 源码上下文预览只能退化成「按邻近位置定位」并提示位置可能不准。
+ * 新提取值缺省（undefined）时保留旧值：宁可用旧坐标，也不要凭空抹掉位置信息。
+ *
+ * 逐字段显式赋值（而非遍历字段名）是为了保持类型安全：
+ * 每个字段的赋值都由编译器校验，新增字段时不会静默漏刷。
+ */
+function refreshSourceDerivedFields(
+    existing: PluginTranslationV1Ast,
+    fresh: PluginTranslationV1Ast
+): PluginTranslationV1Ast {
+    const next: PluginTranslationV1Ast = { ...existing };
+    if (fresh.start !== undefined) next.start = fresh.start;
+    if (fresh.end !== undefined) next.end = fresh.end;
+    if (fresh.line !== undefined) next.line = fresh.line;
+    if (fresh.col !== undefined) next.col = fresh.col;
+    if (fresh.propKey !== undefined) next.propKey = fresh.propKey;
+    if (fresh.argIndex !== undefined) next.argIndex = fresh.argIndex;
+    return next;
 }
 
 /**

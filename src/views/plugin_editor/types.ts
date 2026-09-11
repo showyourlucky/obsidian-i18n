@@ -147,15 +147,32 @@ export interface SourceFingerprint {
     /** 文件字节数 */
     size: number;
 }
+/** 内容来源的磁盘坐标（用于校验缓存是否过期） */
+export interface SourceOrigin {
+    /** 实际读取内容的文件路径（磁盘 main.js 或备份 .gz）；null 表示来源不可定位 */
+    path: string | null;
+    /** 该文件的指纹；读取失败为 null（无法校验，按过期处理） */
+    fingerprint: SourceFingerprint | null;
+}
 
 /** 源码缓存条目 */
 export interface SourceCacheEntry {
     code: string;
-    /** 取源时的 mtime；null 表示来源无磁盘对应物（如备份内容），不做失效校验 */
+    /** 内容实际来源的文件路径；null 表示来源不可定位，永远按过期处理 */
+    sourcePath: string | null;
+    /** 取源时来源文件的 mtime；null 表示无指纹，无法校验 */
     mtimeMs: number | null;
-    /** 取源时的字节数 */
+    /** 取源时来源文件的字节数 */
     size: number;
 }
+
+/**
+ * 源码缓存键：必须带 pluginId。
+ * 缓存以文件名（main.js）为键时，不同插件的同名文件会互相覆盖——
+ * 从备份取源（mtimeMs 为 null）的条目还会绕过失效校验，
+ * 导致 A 插件的源码被当成 B 插件的源码用于定位，预览整体错位。
+ */
+export const sourceCacheKey = (pluginId: string, file: string): string => `${pluginId}:${file}`;
 
 export interface DictSlice {
     // ========== 基础状态 ==========
@@ -180,13 +197,18 @@ export interface DictSlice {
      * 保证条目被删除后重新提取时，命中集合的新条目自动恢复 ignored 标记。
      */
     applyIgnoredKeys: (kind: 'ast' | 'regex', added: string[], removed: string[]) => void;
-    /** 源码缓存（文件名 -> 源码条目，附带失效指纹） */
+    /**
+     * 源码缓存：键由 sourceCacheKey(pluginId, file) 派生，避免跨插件同名文件互相覆盖。
+     */
     sourceCache: Record<string, SourceCacheEntry>;
     /**
-     * 设置指定文件的源码缓存。
-     * fingerprint 缺省/为 null 表示来源无磁盘对应物（如备份内容），不做失效校验。
+     * 设置指定插件指定文件的源码缓存。
+     * origin 记录内容实际来自哪个文件（磁盘 main.js 或备份 .gz），
+     * 后续命中缓存时按该文件重新取指纹校验，避免把过期备份当成最新源码。
      */
-    setSourceCache: (file: string, code: string, fingerprint?: SourceFingerprint | null) => void;
+    setSourceCache: (pluginId: string, file: string, code: string, origin?: SourceOrigin | null) => void;
+    /** 清空全部源码缓存（切换翻译源/插件时调用，防止跨源串味） */
+    clearSourceCache: () => void;
     /** 全局搜索过滤 */
     searchQuery: string;
     setSearchQuery: (query: string) => void;

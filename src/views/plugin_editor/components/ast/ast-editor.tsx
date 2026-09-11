@@ -3,6 +3,7 @@ import { Search, RotateCcw, Trash2, X, Sparkles, Loader2, WholeWord, Square, Eye
 import { Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Button, Checkbox } from '@/src/shadcn';
 import { useTranslation } from 'react-i18next';
 import { useRegexStore } from '../../store';
+import { sourceCacheKey } from '../../types';
 import { EDITOR_EVENTS } from '../../events';
 import { ASTTable } from './ast-table';
 import { useAstJudge } from './use-ast-judge';
@@ -73,8 +74,12 @@ const AstEditor: React.FC<Props> = () => {
     // Cleanup when file switches
     const currentFile = useRegexStore.use.currentFile();
     // 源码预览：取内存缓存中的原始代码 (与诊断/逻辑审计同口径)
+    // 缓存键带 pluginId：同名 main.js 在不同插件间绝不能互相复用
+    const metadata = useRegexStore.use.metadata();
     const sourceCache = useRegexStore.use.sourceCache();
-    const sourceCode = currentFile ? (sourceCache?.[currentFile]?.code ?? '') : '';
+    const sourceCode = currentFile && metadata
+        ? (sourceCache?.[sourceCacheKey(metadata.plugin, currentFile)]?.code ?? '')
+        : '';
 
     // 源码懒加载：上下文弹窗打开时请求主编辑器取源。
     // 已有缓存时也要请求一次——主编辑器会用文件指纹校验缓存是否被插件更新作废；

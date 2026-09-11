@@ -77,6 +77,24 @@ export interface LogicStringHit {
  */
 const MAX_BRANCH_DEPTH = 8;
 
+/**
+ * 把纯文本译文写进模板字面量时，求出其对应的 raw 文本。
+ *
+ * 编辑插件源码时，${date} / ${notename} 这类占位符是给用户看的文案，不是 JS 变量。
+ * 若原样写进模板字面量，运行时会去求值这些标识符：轻则显示 "undefined"，
+ * 重则 ReferenceError 直接崩掉调用方（打开设置页即白屏）。
+ *
+ * 注意不能只转义 ${：Babel 校验 raw 必须与 cooked 自洽，而 JS 求值发生在 raw 层，
+ * 所以反斜杠也要先转义，否则译文里的 C:\path 会被解析成 \p 而丢字符。
+ * 反引号同理，必须转义以免把模板字面量提前闭合。
+ */
+function toTemplateRaw(text: string): string {
+    return text
+        .replace(/\\/g, '\\\\')
+        .replace(/`/g, '\\`')
+        .replace(/\$\{/g, '\\${');
+}
+
 export class AstTranslator {
     private settings: I18nSettings;
     private config: any;
@@ -593,7 +611,7 @@ export class AstTranslator {
      * （口径同 source-context.resolveByOffset）。
      *
      * 为什么要校验：偏移只在提取那一刻正确。插件升级或源码被改写后旧条目会整体错位
-     * （mergeAstItems 保留旧条目、重新提取也不会刷新 start/end），直接采信错位区间会误判。
+     * （mergeAstItems 会保留旧条目：用户没跑增量提取时坐标不会被刷新），直接采信错位区间会误判。
      */
     private isOffsetOnLiteral(code: string, start: number, end: number, source: string): boolean {
         if (!(start >= 0 && end > start && end <= code.length)) return false;
@@ -1287,22 +1305,29 @@ export class AstTranslator {
         return "";
     }
 
+    /**
+     * 用译文替换字面量节点的内容。
+     *
+     * 关键约束：**不改变节点的字面量形态**。
+     * 译文里的 ${xxx} 只是普通文本，不能因为「长得像插值」就把 StringLiteral
+     * 升级成 TemplateLiteral —— 那会让原本的文案片段变成真实变量引用。
+     * 典型事故：插件里 "..._resouces/${date}/${notename}" 是给用户看的模板占位符，
+     * 被改成 `..._resouces/${date}/${notename}` 后打开设置页直接
+     * ReferenceError: date is not defined。
+     *
+     * 因此仅当原节点本来就是 TemplateLiteral 时才重建插值结构；
+     * StringLiteral 一律按纯文本写入（${ 无需转义，普通字符串里本就是字面量）。
+     */
     private replaceSource(node: t.StringLiteral | t.TemplateLiteral, target: string) {
-        if (!target.includes('${')) {
-            if (t.isStringLiteral(node)) node.value = target;
-            else {
-                node.quasis = [t.templateElement({ raw: target, cooked: target }, true)];
-                node.expressions = [];
-            }
+        if (t.isStringLiteral(node)) {
+            node.value = target;
             return;
         }
-        try {
-            const safeTarget = target.replace(/`/g, '\\`');
-            const ast = parseExpression('`' + safeTarget + '`');
-            if (t.isTemplateLiteral(ast)) {
-                Object.assign(node, { type: 'TemplateLiteral', quasis: ast.quasis, expressions: ast.expressions });
-            }
-        } catch (e) { /* ignore */ }
+
+        // 模板字面量：只有「原本就没有插值」的才可能被匹配到 (extractSource 只认单 quasi)，
+        // 因此译文里的 ${ 同样是纯文本，必须按 raw 转义，不能凭空造出变量引用
+        node.quasis = [t.templateElement({ raw: toTemplateRaw(target), cooked: target }, true)];
+        node.expressions = [];
     }
 
     private getAssignName(node: t.Node): string | null {

@@ -4,7 +4,7 @@ import { createTranslationProvider } from '~/ai/provider-factory';
 import { toast } from "sonner";
 import { useTranslation } from 'react-i18next';
 import { JudgeItem } from '~/ai/provider-types';
-import { AstItem } from '../../types';
+import { AstItem, sourceCacheKey } from '../../types';
 import { buildJudgeSnippet, createSourceContextCache } from '@/src/utils/common/source-context';
 import { EDITOR_EVENTS } from '../../events';
 
@@ -13,8 +13,9 @@ import { EDITOR_EVENTS } from '../../events';
  * 用 getState() 在调用时取最新值，避免订阅导致的额外重渲染
  */
 const readSourceCode = (): string => {
-    const { sourceCache, currentFile } = useRegexStore.getState();
-    return (currentFile && sourceCache?.[currentFile]?.code) || '';
+    const { sourceCache, currentFile, metadata } = useRegexStore.getState();
+    if (!currentFile || !metadata) return '';
+    return sourceCache?.[sourceCacheKey(metadata.plugin, currentFile)]?.code || '';
 };
 
 /**
