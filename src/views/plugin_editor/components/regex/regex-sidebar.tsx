@@ -12,6 +12,7 @@ import {
     DropdownMenuSeparator
 } from '@/src/shadcn';
 import { useRegexStore } from '../../store';
+import { isRegexItemKeptOnClearUntranslated } from '../../store/regex-slice';
 import { RegexStatsCard } from '../..';
 import { RegexInsertCard } from './regex-insert-card';
 import { RegexLLMCard } from './regex-llm-card';
@@ -78,6 +79,21 @@ const RegexSidebar: React.FC<Props> = ({
     // Lifted State (Received via props, fallback to local for safety)
     const localController = useRegexTranslation();
     const activeController = regexController || localController;
+
+    // 视图过滤只是隐藏，但「清除未翻译」作用在数据上：被隐藏且未翻译的条目会被一并真实删除。
+    // 这里算出该数量透传给按钮提示——方案是「不豁免，但明确告知」，避免静默删除。
+    const regexItems = useRegexStore.use.regexItems();
+    const hideAstCoveredRegex = useRegexStore.use.hideAstCoveredRegex();
+    const astCoveredRegexSources = useRegexStore.use.astCoveredRegexSources();
+    const clearUntranslatedHiddenCount = React.useMemo(() => {
+        if (!hideAstCoveredRegex || astCoveredRegexSources.length === 0) return 0;
+        const covered = new Set(astCoveredRegexSources);
+        let count = 0;
+        for (const item of regexItems) {
+            if (covered.has(item.source) && !isRegexItemKeptOnClearUntranslated(item)) count++;
+        }
+        return count;
+    }, [hideAstCoveredRegex, astCoveredRegexSources, regexItems]);
 
     // View State Management
     const [showStats, setShowStats] = useState(true);
@@ -148,6 +164,7 @@ const RegexSidebar: React.FC<Props> = ({
                             onClearUntranslated={useRegexStore.use.deleteUntranslatedRegexItems()}
                             onOpenFile={onOpenFile}
                             isApplied={isApplied}
+                            clearUntranslatedHiddenCount={clearUntranslatedHiddenCount}
                         />
                     )}
                     <DiagnoseCard

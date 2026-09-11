@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { t } from "@/src/locales";
 import { STYLES } from '~/constants/llm-options';
 import { SUPPORTED_LANGUAGES } from '~/constants/languages';
+import { selectPendingItems } from '~/utils/translator/pending-items';
 
 
 export const useAstTranslation = () => {
@@ -40,14 +41,11 @@ export const useAstTranslation = () => {
     const abortControllerRef = useRef<AbortController | null>(null);
 
     // Computed State
-    const targetItems = useMemo(() => {
-        return astItems.filter(item =>
-            overwrite ||
-            !item.target ||
-            item.target.trim() === '' ||
-            item.target === item.source
-        );
-    }, [astItems, overwrite]);
+    // 口径统一在 selectPendingItems：人工标记「不需要翻译」的条目永远不参与批量翻译
+    const targetItems = useMemo(
+        () => selectPendingItems(astItems, { overwrite }),
+        [astItems, overwrite]
+    );
 
     // Sync from Global Settings
     useEffect(() => {

@@ -2,6 +2,16 @@ import { StateCreator } from 'zustand';
 import { PluginTranslationV1Regex } from '@/src/types';
 import { RegexItem, RegexStore, RegexSlice } from '../types';
 
+/**
+ * 「清除未翻译」时的保留条件。
+ *
+ * 抽成共享谓词，供删除逻辑与 UI 的「将被一并删除」计数共用：
+ * 两处若各写一份，容易出现「提示说删 3 条、实际删 5 条」的口径漂移。
+ */
+export const isRegexItemKeptOnClearUntranslated = (
+    item: { source?: string; target?: string; ignored?: boolean }
+): boolean => !!(item.ignored || (item.target && item.target !== item.source && item.target.trim() !== ''));
+
 export const createRegexSlice: StateCreator<RegexStore, [], [], RegexSlice> = (set, get) => {
     /**
      * ignored 标记变化同步到当前文件的 ignoredKeys 集合（跨删除/重新提取持久）：
@@ -27,6 +37,16 @@ export const createRegexSlice: StateCreator<RegexStore, [], [], RegexSlice> = (s
 
     return {
         regexItems: [],
+
+        // 视图开关与判定结果都只存在于内存，不落盘：重新打开编辑器即回到「显示全部」
+        hideAstCoveredRegex: false,
+        setHideAstCoveredRegex: (value: boolean) => set({ hideAstCoveredRegex: value }),
+        astCoveredRegexSources: [],
+        setAstCoveredRegexSources: (sources: string[]) => set({ astCoveredRegexSources: sources }),
+
+        // 多选状态同样只存在于内存，切换文件/筛选条件时由 UI 层清空
+        selectedRegexIds: [],
+        setSelectedRegexIds: (ids: number[]) => set({ selectedRegexIds: ids }),
 
         setRegexItems: (items: RegexItem[]) => {
             set({ regexItems: items });
@@ -89,9 +109,7 @@ export const createRegexSlice: StateCreator<RegexStore, [], [], RegexSlice> = (s
 
         // 「不需要翻译」为人工软标记（可能标错），清除未翻译时必须保留，由用户在「只看待删」中显式处理
         deleteUntranslatedRegexItems: () => set((state) => ({
-            regexItems: state.regexItems.filter(item =>
-                item.ignored || (item.target && item.target !== item.source && item.target.trim() !== '')
-            )
+            regexItems: state.regexItems.filter(isRegexItemKeptOnClearUntranslated)
         })),
     };
 };

@@ -196,6 +196,9 @@ export class AstTranslator {
         const allowLoose = this.isLooseMatchEnabled(options);
 
         translations.forEach(item => {
+            // 人工标记「不需要翻译」的条目不参与匹配与替换。
+            // translate 与 traceUsage 必须同口径，否则未用诊断会把不生效的条目误报成「已使用」
+            if (item.ignored === true) return;
             if (item.type && item.name) {
                 strictMap.set(this.getFingerprint(item), item.target);
             }
@@ -242,6 +245,9 @@ export class AstTranslator {
         const allowLoose = this.isLooseMatchEnabled(options);
 
         translations.forEach(item => {
+            // 人工标记「不需要翻译」的条目不参与匹配与替换。
+            // translate 与 traceUsage 必须同口径，否则未用诊断会把不生效的条目误报成「已使用」
+            if (item.ignored === true) return;
             if (item.type && item.name) {
                 strictMap.set(this.getFingerprint(item), item.target);
             }
@@ -294,6 +300,8 @@ export class AstTranslator {
         // 1. 严格指纹查找表 (只关心已翻译的条目)
         const strictMap = new Map<string, PluginTranslationV1Ast & { id?: number }>();
         for (const item of astItems) {
+            // 人工标记「不需要翻译」的条目不会被执行翻译，自然也不会因替换而破坏逻辑
+            if (item.ignored === true) continue;
             if (!item.type || !item.name) continue;
             if (!item.source || !item.target || item.source === item.target) continue;
             strictMap.set(this.getFingerprint(item), item);
@@ -330,6 +338,7 @@ export class AstTranslator {
         // 4. Regex 条目：纯文本替换，任一命中点落在逻辑字符串上即视为风险
         if (code) {
             for (const item of regexItems) {
+                if (item.ignored === true) continue;
                 if (!item.source || !item.target || item.source === item.target) continue;
                 for (const [start, end] of this.locateLiteralRanges(code, item.source)) {
                     let hit: StringContextInfo | null = null;
@@ -460,6 +469,151 @@ export class AstTranslator {
             }
         }
         return ranges;
+    }
+
+    /**
+     * 预计算 Regex 条目 source 在源码中的命中区间 (source → 区间列表)
+     *
+     * 单独暴露只是为了复用：区间定位仅取决于 (源码, 正则条目)，与 AST 条目无关，
+     * 而调用方（编辑器）会因 AST 条目高频变化反复调用 findRegexSourcesCoveredByAst。
+     * 不预计算时每次都按「条目数 × 全文 indexOf」重扫，大字典 + 大 main.js 下会阻塞主线程。
+     *
+     * @param code 与 AST 条目 start/end 同源的原始源码
+     */
+    public buildRegexHitRanges(
+        code: string,
+        regexItems: PluginTranslationV1Regex[]
+    ): Map<string, [number, number][]> {
+        const hitRanges = new Map<string, [number, number][]>();
+        if (!code) return hitRanges;
+        for (const item of regexItems || []) {
+            if (!item || !item.source || hitRanges.has(item.source)) continue;
+            hitRanges.set(item.source, this.locateLiteralRanges(code, item.source));
+        }
+        return hitRanges;
+    }
+
+    /**
+     * 找出「会被 AST 翻译抢先替换、因而永不生效」的 Regex 条目
+     *
+     * 用途：正则列表的视图层过滤（只影响渲染，不修改任何数据）。
+     *
+     * 判定分两层，外加一道前置校验：
+     *   0. 前置校验：AST 条目的 start/end 必须在 code 上**仍然指向这段字面量**
+     *      （见 isOffsetOnLiteral）。偏移错位的条目直接不参与任何判定——宁可不判，
+     *      也不能拿错位区间把仍生效的 Regex 条目误判成「被覆盖」。
+     *   1. 位置层（首选）：AST 条目自带 start/end，Regex 的 source 用 locateLiteralRanges
+     *      定位到源码替换区间；若某条 Regex 的**所有**命中区间内部都完整包含一条
+     *      「AST 会翻掉」条目的区间，则该 Regex 条目不会生效。
+     *   2. 文本层（兜底）：AST 条目缺 start/end（旧翻译文件）时，退化为
+     *      「Regex source 剥出内层引号内容后与 AST source 全等」。
+     *
+     * 只把 target 非空、target !== source 且 ignored !== true 的 AST 条目算作「会翻掉它」：
+     * ignored 表示人工判定「不需要翻译」，此时 Regex 条目恰恰是唯一兜底路径，不能隐藏。
+     *
+     * @param code 原始源码。位置判定要求与 AST 条目的 start/end 同源，故偏移先经校验后才采信
+     * @param hitRanges 可选的预计算结果 (见 buildRegexHitRanges)。传入且命中时复用，
+     *                  避免 AST 条目变化时对每条正则重复全文扫描；缺项仍会按需现算，不影响结果
+     * @returns 命中的 Regex source 集合
+     */
+    public findRegexSourcesCoveredByAst(
+        astItems: PluginTranslationV1Ast[],
+        regexItems: PluginTranslationV1Regex[],
+        code: string,
+        hitRanges?: Map<string, [number, number][]>
+    ): Set<string> {
+        const covered = new Set<string>();
+        if (!code || !regexItems || regexItems.length === 0) return covered;
+
+        // 1. 收集「会被真正翻译」的 AST 条目：可信位置区间 + 缺位置信息时的文本兜底表
+        const ranges: Array<{ start: number, end: number }> = [];
+        const fallbackSources = new Set<string>();
+        for (const item of astItems || []) {
+            if (!item || !item.source || !item.target) continue;
+            if (item.target === item.source || item.ignored === true) continue;
+
+            // 旧翻译文件没有位置信息：退化为文案全等（粗口径，见下方文本层）
+            if (typeof item.start !== 'number' || typeof item.end !== 'number') {
+                fallbackSources.add(item.source);
+                continue;
+            }
+            // 有位置信息但偏移已经对不上这段字面量（插件升级 / 源码改写造成的错位）：
+            // 宁可不判，也不拿错位区间下结论，否则会把仍生效的正则条目误判成被覆盖而隐藏
+            if (!this.isOffsetOnLiteral(code, item.start, item.end, item.source)) continue;
+
+            ranges.push({ start: item.start, end: item.end });
+        }
+        if (ranges.length === 0 && fallbackSources.size === 0) return covered;
+        ranges.sort((a, b) => a.start - b.start);
+
+        /** 是否存在完整落在 [start, end) 内的 AST 字面量区间 */
+        const containsAstLiteral = (start: number, end: number): boolean => {
+            // 二分定位第一个 end > start 的区间，再线性扫过与 [start, end) 相交的部分
+            let lo = 0, hi = ranges.length;
+            while (lo < hi) {
+                const mid = (lo + hi) >> 1;
+                if (ranges[mid].end <= start) lo = mid + 1;
+                else hi = mid;
+            }
+            for (let i = lo; i < ranges.length; i++) {
+                const r = ranges[i];
+                if (r.start >= end) break;
+                if (r.start >= start && r.end <= end) return true;
+            }
+            return false;
+        };
+
+        for (const item of regexItems) {
+            if (!item || !item.source) continue;
+
+            // 位置层：所有命中点都必须落在 AST 覆盖范围内才算「不会生效」
+            // 优先取预计算结果；Map 里没有该 source 时才现算，保证结果与逐条定位完全一致
+            const itemHits = hitRanges?.get(item.source) ?? this.locateLiteralRanges(code, item.source);
+            if (itemHits.length > 0 && itemHits.every(([start, end]) => containsAstLiteral(start, end))) {
+                covered.add(item.source);
+                continue;
+            }
+
+            // 文本层兜底：仅当存在「缺位置信息」的 AST 条目时启用（错位偏移已在上面被剔除，
+            // 不会流到这里）。已知取舍：同文案出现在别处时该条也会被判为覆盖，见单测。
+            if (fallbackSources.size > 0) {
+                const inner = this.extractLiteralInner(item.source);
+                if (inner && fallbackSources.has(inner)) covered.add(item.source);
+            }
+        }
+
+        return covered;
+    }
+
+    /**
+     * 偏移是否可信：code.slice(start, end) 必须就是该条目记录的那段字面量。
+     *
+     * 提取时记录的是 Babel **节点**范围，指向包裹符（引号 / 反引号），而 source 是不含
+     * 包裹符的文本，两者天然差一层，故「原样相等」或「剥掉成对包裹符后相等」都算命中
+     * （口径同 source-context.resolveByOffset）。
+     *
+     * 为什么要校验：偏移只在提取那一刻正确。插件升级或源码被改写后旧条目会整体错位
+     * （mergeAstItems 保留旧条目、重新提取也不会刷新 start/end），直接采信错位区间会误判。
+     */
+    private isOffsetOnLiteral(code: string, start: number, end: number, source: string): boolean {
+        if (!(start >= 0 && end > start && end <= code.length)) return false;
+        const raw = code.slice(start, end);
+        if (raw === source) return true;
+        const quote = raw[0];
+        if (raw.length > 1 && (quote === '"' || quote === "'" || quote === '`') && raw[raw.length - 1] === quote) {
+            return raw.slice(1, -1) === source;
+        }
+        return false;
+    }
+
+    /** 从 Regex 候选中剥出第一个引号包裹的内容；无法可靠判定时返回 null (宁可不判) */
+    private extractLiteralInner(source: string): string | null {
+        const openIdx = source.search(/["'`]/);
+        if (openIdx < 0) return null;
+        const quote = source[openIdx];
+        const closeIdx = source.indexOf(quote, openIdx + 1);
+        if (closeIdx < 0) return null;
+        return source.slice(openIdx + 1, closeIdx) || null;
     }
 
     /**

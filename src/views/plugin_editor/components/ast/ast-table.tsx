@@ -7,7 +7,6 @@ import {
     TableBody,
     TableCell,
     Button,
-    Checkbox,
     Dialog,
     DialogContent,
     DialogHeader,
@@ -26,6 +25,7 @@ import { EDITOR_EVENTS } from '../../events';
 import { IgnoredBadge } from '../common/ignored-badge';
 import { MemoryBadge } from '../common/memory-badge';
 import { ASTTableEmptyState } from './ast-table-empty-state';
+import { HeaderCheckbox, RowCheckbox } from '../common/selection-checkbox';
 import { useRegexStore } from '../../store';
 import { getSourceContext, createSourceContextCache } from '@/src/utils/common/source-context';
 
@@ -107,35 +107,6 @@ const TargetCell = React.memo(({
     );
 }, (prev, next) => {
     return prev.id === next.id && prev.target === next.target && prev.source === next.source;
-});
-
-// 行内选择框（独立 memo 组件，避免点击触发行点击事件）
-const RowCheckbox = React.memo(({
-    id,
-    checked,
-    onToggle,
-}: {
-    id: number,
-    checked: boolean,
-    onToggle: (id: number, checked: boolean) => void,
-}) => {
-    const handleChange = useCallback((c: boolean) => {
-        onToggle(id, c);
-    }, [id, onToggle]);
-
-    const handleClick = useCallback((e: React.MouseEvent) => {
-        e.stopPropagation();
-    }, []);
-
-    return (
-        <div className="flex items-center justify-center" onClick={handleClick}>
-            <Checkbox
-                checked={checked}
-                onCheckedChange={handleChange}
-                aria-label="select row"
-            />
-        </div>
-    );
 });
 
 // 定位单元格：显示行号/偏移，点击打开源码上下文弹窗
@@ -301,31 +272,6 @@ const MemoizedAstRow = React.memo(MemoizedAstRowInner, (prev, next) => {
         && prev.errorType === next.errorType
         && prev.isChecked === next.isChecked
         && prev.onToggleRowSelect === next.onToggleRowSelect;
-});
-
-// 表头全选复选框
-const HeaderCheckbox = React.memo(({
-    checked,
-    indeterminate,
-    onToggle,
-}: {
-    checked: boolean,
-    indeterminate: boolean,
-    onToggle: (checked: boolean) => void,
-}) => {
-    const handleClick = useCallback((e: React.MouseEvent) => {
-        e.stopPropagation();
-    }, []);
-
-    return (
-        <div className="flex items-center justify-center" onClick={handleClick}>
-            <Checkbox
-                checked={indeterminate ? 'indeterminate' : checked}
-                onCheckedChange={(c) => onToggle(!!c)}
-                aria-label="select all"
-            />
-        </div>
-    );
 });
 
 export const ASTTable = React.forwardRef<HTMLDivElement, Props>(({ data, editingId, onRowClick, onDelete, onReset, selectedIds, onToggleRowSelect, isAllSelected, isIndeterminate, onToggleSelectAll, sourceCode, onOpenSource, onNeedSource, isLoadingSource, judging }, ref) => {

@@ -6,11 +6,13 @@ import { toast } from "sonner";
 import { t } from "@/src/locales";
 import { STYLES } from '@/src/constants/llm-options';
 import { SUPPORTED_LANGUAGES } from '@/src/constants/languages';
+import { selectPendingItems } from '~/utils/translator/pending-items';
 
 
 export const useRegexTranslation = () => {
     const regexItems = useRegexStore.use.regexItems();
     const updateRegexItems = useRegexStore.use.updateRegexItems();
+    const selectedRegexIds = useRegexStore.use.selectedRegexIds();
     const i18n = useGlobalStore.use.i18n();
 
     // Local State
@@ -40,14 +42,17 @@ export const useRegexTranslation = () => {
     const abortControllerRef = useRef<AbortController | null>(null);
 
     // Computed State
+    //
+    // 口径统一在 selectPendingItems：人工标记「不需要翻译」的条目永远不参与批量翻译。
+    // 表格有选中项时只翻选中的；未选中时翻全部待翻译条目。
+    // 注意「隐藏 AST 已覆盖」只是视图过滤，不影响翻译范围——要排除它们请用多选。
+    // 待翻译计数 / token 估算 / 费用估算 / 进度总数都派生自 targetItems，随之自动保持一致。
+    const selectedIdSet = useMemo(() => new Set(selectedRegexIds), [selectedRegexIds]);
     const targetItems = useMemo(() => {
-        return regexItems.filter(item =>
-            overwrite ||
-            !item.target ||
-            item.target.trim() === '' ||
-            item.target === item.source
-        );
-    }, [regexItems, overwrite]);
+        const pending = selectPendingItems(regexItems, { overwrite });
+        if (selectedIdSet.size === 0) return pending;
+        return pending.filter(item => selectedIdSet.has(item.id));
+    }, [regexItems, overwrite, selectedIdSet]);
 
     // Sync from Global Settings
     useEffect(() => {
@@ -245,6 +250,8 @@ export const useRegexTranslation = () => {
             currentBatch,
             totalBatches,
             targetItems,
+            /** 是否处于「仅翻译选中」模式（决定按钮文案与范围） */
+            isSelectionMode: selectedIdSet.size > 0,
             timeout,
             timeoutError,
             get estimation() {

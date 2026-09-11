@@ -1,6 +1,7 @@
 import fs from 'fs';
 import { PluginTranslationV1Regex } from '~/types';
-import { I18nSettings } from 'src/settings/data';
+// 仅类型依赖：用 import type 保证被完全擦除，便于单测直接加载本类
+import type { I18nSettings } from 'src/settings/data';
 
 import { REGEX_DEFAULT_CONFIG, DOM_EVENT_NAMES, HARDCODED_WORDS } from './config';
 
@@ -255,6 +256,9 @@ export class RegexTranslator {
     public translate(code: string, translations: PluginTranslationV1Regex[]): string {
         let translatedCode = code;
         for (const item of translations) {
+            // 人工标记「不需要翻译」的条目不参与替换。
+            // translate 与 traceUsage 必须同口径，否则未用诊断会把不生效的条目误报成「已使用」
+            if (item.ignored === true) continue;
             if (!item.source || !item.target || item.source === item.target) continue;
             translatedCode = this.replaceLiteral(translatedCode, item.source, item.target);
         }
@@ -270,6 +274,8 @@ export class RegexTranslator {
     public traceUsage(code: string, translations: PluginTranslationV1Regex[]): Set<string> {
         const hitSources = new Set<string>();
         for (const item of translations) {
+            // 与 translate() 同口径：人工标记「不需要翻译」的条目不参与替换，也不该被算作「已使用」
+            if (item.ignored === true) continue;
             if (item.source && this.hasMatch(code, item.source)) {
                 hitSources.add(item.source);
             }

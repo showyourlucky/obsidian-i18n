@@ -87,6 +87,27 @@ export interface RegexSlice {
     /** 正则项列表 */
     regexItems: RegexItem[];
 
+    /**
+     * 视图开关：隐藏「会被 AST 翻译抢先替换、因而永不生效」的正则条目。
+     * 只影响列表渲染，不修改任何数据；关闭后条目原样恢复显示。
+     */
+    hideAstCoveredRegex: boolean;
+    setHideAstCoveredRegex: (value: boolean) => void;
+
+    /**
+     * 上述过滤的判定结果（被 AST 已翻译条目覆盖的 Regex source 集合）。
+     * 由编辑层在数据/源码变化时计算后写入，仅供渲染层读取。
+     */
+    astCoveredRegexSources: string[];
+    setAstCoveredRegexSources: (sources: string[]) => void;
+
+    /**
+     * 正则表格的多选：参与「仅翻译选中」的条目 id 集合。
+     * 仅存于内存；为空表示未选中，翻译范围回到「全部待翻译条目」。
+     */
+    selectedRegexIds: number[];
+    setSelectedRegexIds: (ids: number[]) => void;
+
     // ========== 条目操作 ==========
     /** 初始化正则项列表 */
     setRegexItems: (items: RegexItem[]) => void;

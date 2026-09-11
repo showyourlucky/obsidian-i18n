@@ -10,6 +10,13 @@ interface QuickActionsCardProps {
     onOpenFile?: () => void;
     isExtracting?: boolean;
     isApplied?: boolean;
+    /**
+     * 当前因「隐藏 AST 已覆盖项」而未显示、但会被「清除未翻译」一并真实删除的条目数。
+     *
+     * 视图过滤本身只是隐藏，而批量清理作用在数据上：被隐藏的条目多为「未翻译」，
+     * 恰好命中清除条件。传入 > 0 时在按钮提示里明确告知，避免被静默删除。仅正则侧使用。
+     */
+    clearUntranslatedHiddenCount?: number;
 }
 
 const QuickActionsCard: React.FC<QuickActionsCardProps> = memo(({
@@ -17,7 +24,8 @@ const QuickActionsCard: React.FC<QuickActionsCardProps> = memo(({
     onClearUntranslated,
     onOpenFile,
     isExtracting,
-    isApplied
+    isApplied,
+    clearUntranslatedHiddenCount
 }) => {
     const { t } = useTranslation();
 
@@ -57,7 +65,12 @@ const QuickActionsCard: React.FC<QuickActionsCardProps> = memo(({
                     variant="secondary"
                     size="sm"
                     onClick={onClearUntranslated}
-                    title={t('Editor.Actions.DeleteUntranslatedTip')}
+                    title={clearUntranslatedHiddenCount && clearUntranslatedHiddenCount > 0
+                        ? t('Editor.Actions.DeleteUntranslatedHiddenTip', {
+                            count: clearUntranslatedHiddenCount,
+                            defaultValue: '将一并删除 {{count}} 条当前被隐藏、不会生效的条目'
+                        })
+                        : t('Editor.Actions.DeleteUntranslatedTip')}
                     className="text-xs h-8 gap-1.5 text-red-600 dark:text-red-400 transition-all duration-200 hover:scale-[1.01] active:scale-95 group w-full font-medium bg-red-500/10 hover:bg-red-500/20 border-red-500/20"
                 >
                     <Trash2 className="w-3.5 h-3.5" />

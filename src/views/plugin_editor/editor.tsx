@@ -58,6 +58,15 @@ function readFileFingerprint(filePath: string): SourceFingerprint | null {
 const memoryLanguage = (metadata: { language?: string } | null, i18n: I18N): string =>
     metadata?.language || i18n.settings.language || '';
 
+/**
+ * 正则 source 列表是否与缓存一致 (逐项比较，不生成拼接字符串)。
+ *
+ * 命中区间的预计算只取决于 source 集合：改译文会换掉 regexItems 引用，但 source 没变时
+ * 命中区间不会变，故不能用数组引用做缓存键。
+ */
+const sameRegexSources = (a: readonly string[], b: readonly string[]): boolean =>
+    a.length === b.length && a.every((source, i) => source === b[i]);
+
 const SaveButton: React.FC<{ onSave: () => void; isSaving: boolean }> = React.memo(({ onSave, isSaving }) => {
     const { t } = useTranslation();
     const astItems = useRegexStore.use.astItems();
@@ -582,9 +591,9 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
                         return;
                     }
 
-                    // 准备要测试的项
-                    const activeAstItems = astItems.filter(item => item.target && item.target !== item.source);
-                    const activeRegexItems = regexItems.filter(item => item.target && item.target !== item.source);
+                    // 准备要测试的项 (人工标记「不需要翻译」的条目不参与应用，也就无需试运行验证)
+                    const activeAstItems = astItems.filter(item => item.ignored !== true && item.target && item.target !== item.source);
+                    const activeRegexItems = regexItems.filter(item => item.ignored !== true && item.target && item.target !== item.source);
 
                     if (activeAstItems.length === 0 && activeRegexItems.length === 0) {
                         notice.success(t('Editor.Notices.DiagnosisSuccess'));
@@ -736,8 +745,9 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
             const { regexItems, astItems } = useRegexStore.getState();
             const results: DiagnoseError[] = [];
 
-            // 1. 扫描 AST 条目
+            // 1. 扫描 AST 条目 (标记「不需要翻译」的不参与应用，无需求检其译文)
             for (const item of astItems) {
+                if (item.ignored === true) continue;
                 const target = item.target || '';
                 const issues = astTranslator.validateSecurity(target);
                 for (const issue of issues) {
@@ -751,8 +761,9 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
                 }
             }
 
-            // 2. 扫描 Regex 条目
+            // 2. 扫描 Regex 条目 (同上)
             for (const item of regexItems) {
+                if (item.ignored === true) continue;
                 const source = item.source || '';
                 const target = item.target || '';
                 const issues = regexTranslator.validateSecurity(target, source);
@@ -808,6 +819,8 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
 
                 // 为了精确匹配，我们需要再次遍历 astItems
                 astItems.forEach(item => {
+                    // 人工标记「不需要翻译」的条目不参与替换，也不该被当作冗余候选
+                    if (item.ignored === true) return;
                     // 获取指纹 (严格模式)
                     const fingerprint = `${item.type}:${item.name}:${item.source}`;
                     const isHit = hitFingerprints.has(fingerprint) || hitFingerprints.has(item.source);
@@ -826,6 +839,8 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
             // 2. Regex 冗余诊断
             const hitSources = regexTranslator.traceUsage(originalCode, regexItems);
             regexItems.forEach(item => {
+                // 同上：标记条目不参与替换，不列为冗余
+                if (item.ignored === true) return;
                 if (!hitSources.has(item.source)) {
                     results.push({
                         type: 'regex',
@@ -1057,7 +1072,87 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
     const dictData = useRegexStore.use.dictData();
     const currentFile = useRegexStore.use.currentFile();
     const astItems = useRegexStore.use.astItems();
+    const regexItems = useRegexStore.use.regexItems();
+    const setAstCoveredRegexSources = useRegexStore.use.setAstCoveredRegexSources();
     const fileOptions = Object.keys(dictData || {});
+
+    /**
+     * 「隐藏 AST 已翻译覆盖的正则条目」判定
+     *
+     * 纯视图过滤：结果只写进 store 供列表渲染使用，不修改任何条目。
+     * 口径见 AstTranslator.findRegexSourcesCoveredByAst —— 只有 AST 侧确实会翻掉它
+     * （target 非空、≠ source、未标 ignored）的条目才算被覆盖。
+     *
+     * 计算量集中在 Regex 命中区间的定位（每条一次全文 indexOf），故做 300ms 防抖 + 命中区间缓存：
+     * AST 表格逐字编辑会高频改动 astItems，不能每次按键都重算。
+     */
+    // 判定结果按文件计算，而「隐藏」开关是全局的：换文件先丢弃旧结论，
+    // 否则新文件里同名 source 的正则条目会被上一个文件的判定结果错误隐藏。
+    // 只依赖 currentFile，不在数据变化时触发，避免编辑时列表闪烁。
+    useEffect(() => {
+        setAstCoveredRegexSources([]);
+    }, [currentFile, setAstCoveredRegexSources]);
+
+    /**
+     * 正则 source 列表 → 源码命中区间 的预计算缓存。
+     *
+     * 该定位只取决于 (源码, 正则 source 集合)，与 AST 条目、正则译文都无关。但本 effect 会因
+     * AST 条目高频变化反复触发，批量翻译回填译文也会换掉 regexItems 引用。二者未变时直接复用，
+     * 把「每次编辑 × 每条正则全文扫描」降为「算一次」。
+     *
+     * 缓存键用 source 逐项比较而非 regexItems 引用：改译文也会换引用，但命中区间并没变，
+     * 不该因此重扫全文；逐项比较不生成字符串，成本是微秒级。
+     */
+    const regexSources = useMemo(() => regexItems.map(i => i.source), [regexItems]);
+    const regexHitRangesRef = React.useRef<{
+        sources: readonly string[];
+        code: string;
+        map: Map<string, [number, number][]>;
+    } | null>(null);
+
+    useEffect(() => {
+        let cancelled = false;
+        const timer = setTimeout(async () => {
+            try {
+                if (regexItems.length === 0 || astItems.length === 0) {
+                    if (!cancelled) setAstCoveredRegexSources([]);
+                    return;
+                }
+                const sourceContext = await resolveSourceContext({ silent: true });
+                // 取源失败时同样清空：宁可全部显示，也不能沿用上一次的结论
+                if (!sourceContext) {
+                    if (!cancelled) setAstCoveredRegexSources([]);
+                    return;
+                }
+                if (cancelled) return;
+
+                // 用局部变量持有区间表：ref.current 是可变属性，TS 无法在赋值后保持非空窄化
+                let hitRanges = regexHitRangesRef.current;
+                if (!hitRanges || !sameRegexSources(hitRanges.sources, regexSources) || hitRanges.code !== sourceContext.code) {
+                    hitRanges = {
+                        sources: regexSources,
+                        code: sourceContext.code,
+                        map: astTranslator.buildRegexHitRanges(sourceContext.code, regexItems),
+                    };
+                    regexHitRangesRef.current = hitRanges;
+                }
+
+                const covered = astTranslator.findRegexSourcesCoveredByAst(
+                    astItems, regexItems, sourceContext.code, hitRanges.map
+                );
+                if (!cancelled) setAstCoveredRegexSources(Array.from(covered));
+            } catch (e) {
+                // 取源本身可能抛错 (例如备份损坏导致 gunzip 失败)：同样必须清空，
+                // 否则会沿用上一次的结论，出现「改了 AST 却还被隐藏」的假象
+                console.warn('[Editor] 计算「AST 已覆盖的正则条目」失败，暂时全部显示', e);
+                if (!cancelled) setAstCoveredRegexSources([]);
+            }
+        }, 300);
+        return () => {
+            cancelled = true;
+            clearTimeout(timer);
+        };
+    }, [astItems, regexItems, regexSources, resolveSourceContext, astTranslator, setAstCoveredRegexSources]);
 
     // 获取当前插件的翻译应用状态 (isApplied)
     const isApplied = React.useMemo(() => {

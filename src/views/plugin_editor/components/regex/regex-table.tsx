@@ -15,6 +15,7 @@ import { RegexItem, DiagnoseError } from '../../types';
 import { EDITOR_EVENTS } from '../../events';
 import { IgnoredBadge } from '../common/ignored-badge';
 import { MemoryBadge } from '../common/memory-badge';
+import { HeaderCheckbox, RowCheckbox } from '../common/selection-checkbox';
 
 import {
     ColumnDef,
@@ -29,6 +30,12 @@ export interface Props {
     data: RegexItem[];
     editingId: number | null;
     onEditingIdChange: (id: number | null) => void;
+    // 多选（选中项用于「仅翻译选中」）
+    selectedIds?: Set<number>;
+    onToggleRowSelect?: (id: number, checked: boolean) => void;
+    isAllSelected?: boolean;
+    isIndeterminate?: boolean;
+    onToggleSelectAll?: (checked: boolean) => void;
 }
 
 // 提取 Target 单元格以优化性能并保持 hook 规则
@@ -79,6 +86,8 @@ interface MemoizedRegexRowProps {
     isSelected: boolean;
     dataIndex: number;
     errorType?: 'error' | 'unused' | 'security' | null;
+    isChecked: boolean;
+    onToggleRowSelect?: (id: number, checked: boolean) => void;
 }
 
 const errorRowStyles: Record<string, string> = {
@@ -88,7 +97,7 @@ const errorRowStyles: Record<string, string> = {
 };
 
 const MemoizedRegexRowInner = React.forwardRef<HTMLTableRowElement, MemoizedRegexRowProps>(
-    ({ row, isSelected, dataIndex, errorType }, ref) => {
+    ({ row, isSelected, dataIndex, errorType, isChecked, onToggleRowSelect }, ref) => {
         const errorClass = errorType ? errorRowStyles[errorType] || '' : '';
 
         return (
@@ -116,10 +125,15 @@ MemoizedRegexRowInner.displayName = 'MemoizedRegexRow';
 const MemoizedRegexRow = React.memo(MemoizedRegexRowInner, (prev, next) => {
     return prev.isSelected === next.isSelected
         && prev.row.original === next.row.original
-        && prev.errorType === next.errorType;
+        && prev.errorType === next.errorType
+        && prev.isChecked === next.isChecked
+        && prev.onToggleRowSelect === next.onToggleRowSelect;
 });
 
-export const RegexTable = React.forwardRef<HTMLDivElement, Props>(({ data, editingId, onEditingIdChange }, ref) => {
+export const RegexTable = React.forwardRef<HTMLDivElement, Props>(({
+    data, editingId, onEditingIdChange,
+    selectedIds, onToggleRowSelect, isAllSelected, isIndeterminate, onToggleSelectAll
+}, ref) => {
     const { t } = useTranslation();
     const updateRegexItem = useRegexStore.use.updateRegexItem();
     const deleteRegexItem = useRegexStore.use.deleteRegexItem();
@@ -148,8 +162,33 @@ export const RegexTable = React.forwardRef<HTMLDivElement, Props>(({ data, editi
         return () => window.removeEventListener(EDITOR_EVENTS.DiagnoseErrors, handleErrors as EventListener);
     }, []);
 
-    const columns = useMemo<ColumnDef<RegexItem>[]>(
-        () => [
+    const selectionEnabled = !!onToggleRowSelect && selectedIds !== undefined;
+
+    const columns = useMemo<ColumnDef<RegexItem>[]>(() => {
+        const cols: ColumnDef<RegexItem>[] = [];
+
+        // 多选列：选中项用于「仅翻译选中」，未选中时翻译全部待翻译条目
+        if (selectionEnabled) {
+            cols.push({
+                id: "select",
+                header: () => (
+                    <HeaderCheckbox
+                        checked={!!isAllSelected}
+                        indeterminate={!!isIndeterminate}
+                        onToggle={onToggleSelectAll || (() => { })}
+                    />
+                ),
+                cell: ({ row }) => (
+                    <RowCheckbox
+                        id={row.original.id}
+                        checked={selectedIds?.has(row.original.id) || false}
+                        onToggle={onToggleRowSelect!}
+                    />
+                ),
+            });
+        }
+
+        cols.push(
             {
                 accessorKey: "source",
                 header: ({ column }) => <div className="text-center pl-4">{t('Editor.Table.ColumnSource')}</div>,
@@ -229,9 +268,10 @@ export const RegexTable = React.forwardRef<HTMLDivElement, Props>(({ data, editi
                     );
                 },
             },
-        ],
-        [onEditingIdChange, updateRegexItem, resetRegexItem, deleteRegexItem]
-    );
+        );
+
+        return cols;
+    }, [onEditingIdChange, updateRegexItem, resetRegexItem, deleteRegexItem, selectionEnabled, isAllSelected, isIndeterminate, onToggleSelectAll, onToggleRowSelect, selectedIds]);
 
     const table = useReactTable({
         data,
@@ -272,7 +312,11 @@ export const RegexTable = React.forwardRef<HTMLDivElement, Props>(({ data, editi
                                 {headerGroup.headers.map((header) => (
                                     <TableHead
                                         key={header.id}
-                                        className={`${header.id === 'actions' ? "w-[1%] whitespace-nowrap pl-2 pr-4" : "w-[45%] px-4"
+                                        className={`${header.id === 'select'
+                                            ? "w-[1%] whitespace-nowrap pl-4 pr-1"
+                                            : header.id === 'actions'
+                                                ? "w-[1%] whitespace-nowrap pl-2 pr-4"
+                                                : "w-[45%] px-4"
                                             } sticky top-0 bg-background z-20 shadow-sm border-b ring-0`}
                                         style={{ backgroundColor: 'var(--background-primary)' }}
                                     >
@@ -301,6 +345,8 @@ export const RegexTable = React.forwardRef<HTMLDivElement, Props>(({ data, editi
                                     row={row}
                                     isSelected={row.original.id === editingId}
                                     errorType={errorMap.get(row.original.id) || null}
+                                    isChecked={selectedIds?.has(row.original.id) || false}
+                                    onToggleRowSelect={onToggleRowSelect}
                                 />
                             );
                         })}
