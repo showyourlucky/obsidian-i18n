@@ -3,8 +3,10 @@ import { parse, parseExpression } from "@babel/parser";
 import traverse from '@babel/traverse';
 import { generate } from "@babel/generator";
 import * as t from '@babel/types';
-import { PluginTranslationV1Ast, PluginTranslationV1Regex } from '~/types';
-import { I18nSettings } from '../../settings/data';
+// 仅类型依赖：用 import type 保证被完全擦除，
+// 避免运行时把 settings/data 及其 obsidian 依赖链一并拉起，便于单测直接覆盖本类
+import type { PluginTranslationV1Ast, PluginTranslationV1Regex } from '~/types';
+import type { I18nSettings } from '../../settings/data';
 
 // ====================================================================================================
 //                                      Configuration (白名单配置)
@@ -68,6 +70,12 @@ export interface LogicStringHit {
     context: string;
     line: number;
 }
+
+/**
+ * 三元表达式展开的最大嵌套深度。
+ * 编译产物里的条件分支不会太深，设上限纯粹是防御病态输入 (如自动生成的长嵌套三元)。
+ */
+const MAX_BRANCH_DEPTH = 8;
 
 export class AstTranslator {
     private settings: I18nSettings;
@@ -377,8 +385,11 @@ export class AstTranslator {
 
     /** 推断字符串字面量所处的上下文类型与名称 (口径与 traverseAllStrings 保持一致) */
     private describeLiteralContext(path: any): { type: string, name: string } {
-        const node = path.node;
-        const parent = path.parentPath?.node;
+        // 三元分支内的字符串需上溯：其上下文位置是整个三元表达式所占据的位置
+        const site = this.liftBranchContext(path);
+        if (!site) return { type: '', name: '' };
+        const node = site.node;
+        const parent = site.parentPath?.node;
         if (!parent) return { type: '', name: '' };
 
         if (t.isVariableDeclarator(parent) && parent.init === node) {
@@ -634,46 +645,55 @@ export class AstTranslator {
                     callback('AssignmentExpression', name, node.right);
                 }
             },
-            // 3. 对象属性 ({ name: "..." })
+            // 3. 对象属性 ({ name: "..." } / { title: cond ? "a" : "b" })
             ObjectProperty: (path) => {
                 const node = path.node;
                 const name = this.getObjKeyName(node.key);
-                if (name && this.config.keys.includes(name) && !this.isStructuralKey(name) && this.isStrNode(node.value)) {
-                    callback('ObjectProperty', name, node.value, { propKey: name });
+                if (name && this.config.keys.includes(name) && !this.isStructuralKey(name)) {
+                    this.collectStrNodes(node.value).forEach(str => {
+                        callback('ObjectProperty', name, str, { propKey: name });
+                    });
                 }
             },
-            // 4. 函数调用 (Notice("..."))
+            // 4. 函数调用 (Notice("...") / createElement(Tag, props, cond ? "a" : "b"))
             CallExpression: (path) => {
                 const node = path.node;
                 const name = this.getCallName(node.callee);
                 if (name && this.config.functions.includes(name) && isFrameworkCreateCall(name, node)) {
                     const skipArgs = this.getShorthandSkipArgs(name);
                     node.arguments.forEach((arg, index) => {
-                        // createEl("div", "cls-shorthand") 这类位置参数属于 DOM 结构，跳过
+                        // createEl("div", "cls-shorthand") 这类位置参数属于 DOM 结构，跳过。
+                        // 必须在展开三元之前判定：否则 createDiv(cond ? "a" : "b") 的类名会被误提
                         if (skipArgs.includes(index)) return;
-                        if (this.isStrNode(arg)) {
-                            callback('CallExpression', name, arg, { argIndex: index });
-                        } else if (t.isObjectExpression(arg)) {
+
+                        const strNodes = this.collectStrNodes(arg);
+                        if (strNodes.length > 0) {
+                            strNodes.forEach(str => callback('CallExpression', name, str, { argIndex: index }));
+                            return;
+                        }
+                        if (t.isObjectExpression(arg)) {
                             // 深度提取：提取白名单函数参数对象中的所有字符串值 (排除结构性键)
                             arg.properties.forEach(prop => {
-                                if (t.isObjectProperty(prop)) {
-                                    const propName = this.getObjKeyName(prop.key) || 'prop';
-                                    if (!this.isStructuralKey(propName, name)) {
-                                        if (this.isStrNode(prop.value)) {
-                                            callback('ObjectProperty', propName, prop.value, { propKey: propName });
-                                        } else if (t.isArrayExpression(prop.value)) {
-                                            // children 数组 (如 { children: ["a", "b"] })
-                                            prop.value.elements.forEach(el => {
-                                                if (this.isStrNode(el)) callback('ObjectProperty', propName, el, { propKey: propName });
-                                            });
-                                        }
-                                    }
+                                if (!t.isObjectProperty(prop)) return;
+                                const propName = this.getObjKeyName(prop.key) || 'prop';
+                                if (this.isStructuralKey(propName, name)) return;
+
+                                const valueNodes = this.collectStrNodes(prop.value);
+                                if (valueNodes.length > 0) {
+                                    valueNodes.forEach(str => callback('ObjectProperty', propName, str, { propKey: propName }));
+                                    return;
+                                }
+                                if (t.isArrayExpression(prop.value)) {
+                                    // children 数组 (如 { children: ["a", "b"] })
+                                    prop.value.elements.forEach(el => {
+                                        this.collectStrNodes(el).forEach(str => callback('ObjectProperty', propName, str, { propKey: propName }));
+                                    });
                                 }
                             });
                         } else if (t.isArrayExpression(arg)) {
                             // 顶层 children 数组 (如 jsx("div", null, "a", ["b"]))
                             arg.elements.forEach(el => {
-                                if (this.isStrNode(el)) callback('CallExpression', name, el, { argIndex: index });
+                                this.collectStrNodes(el).forEach(str => callback('CallExpression', name, str, { argIndex: index }));
                             });
                         }
                     });
@@ -686,28 +706,35 @@ export class AstTranslator {
                 if (name && this.config.functions.includes(name) && isFrameworkCreateCall(name, node)) {
                     const skipArgs = this.getShorthandSkipArgs(name);
                     node.arguments.forEach((arg, index) => {
+                        // 与 CallExpression 同口径：先按位置参数跳过，再展开三元
                         if (skipArgs.includes(index)) return;
-                        if (this.isStrNode(arg)) {
-                            callback('NewExpression', name, arg, { argIndex: index });
-                        } else if (t.isObjectExpression(arg)) {
+
+                        const strNodes = this.collectStrNodes(arg);
+                        if (strNodes.length > 0) {
+                            strNodes.forEach(str => callback('NewExpression', name, str, { argIndex: index }));
+                            return;
+                        }
+                        if (t.isObjectExpression(arg)) {
                             // 深度提取
                             arg.properties.forEach(prop => {
-                                if (t.isObjectProperty(prop)) {
-                                    const propName = this.getObjKeyName(prop.key) || 'prop';
-                                    if (!this.isStructuralKey(propName, name)) {
-                                        if (this.isStrNode(prop.value)) {
-                                            callback('ObjectProperty', propName, prop.value, { propKey: propName });
-                                        } else if (t.isArrayExpression(prop.value)) {
-                                            prop.value.elements.forEach(el => {
-                                                if (this.isStrNode(el)) callback('ObjectProperty', propName, el, { propKey: propName });
-                                            });
-                                        }
-                                    }
+                                if (!t.isObjectProperty(prop)) return;
+                                const propName = this.getObjKeyName(prop.key) || 'prop';
+                                if (this.isStructuralKey(propName, name)) return;
+
+                                const valueNodes = this.collectStrNodes(prop.value);
+                                if (valueNodes.length > 0) {
+                                    valueNodes.forEach(str => callback('ObjectProperty', propName, str, { propKey: propName }));
+                                    return;
+                                }
+                                if (t.isArrayExpression(prop.value)) {
+                                    prop.value.elements.forEach(el => {
+                                        this.collectStrNodes(el).forEach(str => callback('ObjectProperty', propName, str, { propKey: propName }));
+                                    });
                                 }
                             });
                         } else if (t.isArrayExpression(arg)) {
                             arg.elements.forEach(el => {
-                                if (this.isStrNode(el)) callback('NewExpression', name, el, { argIndex: index });
+                                this.collectStrNodes(el).forEach(str => callback('NewExpression', name, str, { argIndex: index }));
                             });
                         }
                     });
@@ -766,15 +793,16 @@ export class AstTranslator {
             ObjectProperty: (path) => {
                 const node = path.node;
                 const name = this.getObjKeyName(node.key) || 'prop';
-                if (this.isStrNode(node.value)) {
-                    report(path.get('value'), 'ObjectProperty', name, node.value);
-                } else if (t.isArrayExpression(node.value)) {
+                const valuePath = path.get('value');
+                // 与提取侧对称：三元分支内的字符串同样要进入替换/诊断范围，
+                // 否则会出现「列表里有、翻译不上」的假翻译
+                const strPaths = this.collectStrPaths(valuePath);
+                strPaths.forEach(s => report(s.path, 'ObjectProperty', name, s.node));
+                if (strPaths.length === 0 && t.isArrayExpression(node.value)) {
                     // children 数组 (如 { children: ["a", "b"] })，与提取侧对称
-                    const elPaths = path.get('value').get('elements') as any[];
-                    elPaths.forEach(elPath => {
-                        if (elPath && elPath.node && this.isStrNode(elPath.node)) {
-                            report(elPath, 'ObjectProperty', name, elPath.node);
-                        }
+                    const elPaths = (valuePath as any).get('elements') as any[];
+                    (elPaths || []).forEach(elPath => {
+                        this.collectStrPaths(elPath).forEach(s => report(s.path, 'ObjectProperty', name, s.node));
                     });
                 }
             },
@@ -783,15 +811,13 @@ export class AstTranslator {
                 const name = this.getCallName(node.callee) || 'func';
                 const argPaths = path.get('arguments') as any[];
                 node.arguments.forEach((arg, index) => {
-                    if (this.isStrNode(arg)) {
-                        report(argPaths[index], 'CallExpression', name, arg);
-                    } else if (t.isArrayExpression(arg)) {
+                    const strPaths = this.collectStrPaths(argPaths[index]);
+                    strPaths.forEach(s => report(s.path, 'CallExpression', name, s.node));
+                    if (strPaths.length === 0 && t.isArrayExpression(arg)) {
                         // 顶层 children 数组 (如 jsx("div", null, "a", ["b"]))，与提取侧对称
                         const elPaths = (argPaths[index] as any).get('elements') as any[];
-                        elPaths.forEach(elPath => {
-                            if (elPath && elPath.node && this.isStrNode(elPath.node)) {
-                                report(elPath, 'CallExpression', name, elPath.node);
-                            }
+                        (elPaths || []).forEach(elPath => {
+                            this.collectStrPaths(elPath).forEach(s => report(s.path, 'CallExpression', name, s.node));
                         });
                     }
                 });
@@ -801,14 +827,12 @@ export class AstTranslator {
                 const name = this.getCallName(node.callee) || 'new';
                 const argPaths = path.get('arguments') as any[];
                 node.arguments.forEach((arg, index) => {
-                    if (this.isStrNode(arg)) {
-                        report(argPaths[index], 'NewExpression', name, arg);
-                    } else if (t.isArrayExpression(arg)) {
+                    const strPaths = this.collectStrPaths(argPaths[index]);
+                    strPaths.forEach(s => report(s.path, 'NewExpression', name, s.node));
+                    if (strPaths.length === 0 && t.isArrayExpression(arg)) {
                         const elPaths = (argPaths[index] as any).get('elements') as any[];
-                        elPaths.forEach(elPath => {
-                            if (elPath && elPath.node && this.isStrNode(elPath.node)) {
-                                report(elPath, 'NewExpression', name, elPath.node);
-                            }
+                        (elPaths || []).forEach(elPath => {
+                            this.collectStrPaths(elPath).forEach(s => report(s.path, 'NewExpression', name, s.node));
                         });
                     }
                 });
@@ -836,9 +860,15 @@ export class AstTranslator {
     private logicStringReason(path: any): LogicStringInfo | null {
         if (!path || !path.parentPath) return null;
 
-        const node = path.node;
-        const parent = path.parentPath.node;
-        if (!node || !parent) return null;
+        const rawNode = path.node;
+        if (!rawNode) return null;
+
+        // 三元分支内的字符串需上溯：分支值参与比较/分支判断时，判定依据是整个三元表达式的位置
+        const site = this.liftBranchContext(path);
+        if (!site) return null;
+        const node = site.node;
+        const parent = site.parentPath?.node;
+        if (!parent) return null;
 
         /** 提取调用方法名: fn("x") -> fn, obj.startsWith("x") -> startsWith */
         const getMethodName = (callee: any): string | null => {
@@ -867,7 +897,8 @@ export class AstTranslator {
         }
 
         // 5. 硬编码依赖词 (模块互操作 / 语言关键字) 与 DOM 事件名
-        const raw = this.extractSource(node);
+        // 必须用字符串自身的值判定：三元上溯后 node 已是最外层容器，extractSource 取不到文本
+        const raw = this.extractSource(rawNode);
         if (raw && DOM_EVENT_NAMES.has(raw.toLowerCase())) return { reason: 'eventName', context: raw };
         if (raw && HARDCODED_WORDS.has(raw)) return { reason: 'hardcoded', context: raw };
 
@@ -933,8 +964,14 @@ export class AstTranslator {
      * @param path 字符串字面量自身的 NodePath
      */
     private isStructuralContext(path: any): boolean {
-        const node = path?.node;
-        const parent = path?.parentPath?.node;
+        // 三元分支内的字符串需上溯到整个三元表达式的位置。
+        // 缺了这层上溯，createDiv(cond ? "a" : "b") 的类名会被判为「非结构」而翻译，
+        // 导致 CSS 规则与 querySelector 静默失配。
+        const site = this.liftBranchContext(path);
+        if (!site) return false;
+        const node = site.node;
+        const parentPath = site.parentPath;
+        const parent = parentPath?.node;
         if (!node || !parent) return false;
 
         // 1. 对象属性的值
@@ -955,7 +992,7 @@ export class AstTranslator {
         // createDiv(["foo"]) 的简写参数数组) 时，其字符串元素同样不可翻译，
         // 否则会误替换 CSS 类名 / 标识符，导致样式静默损坏。
         if (t.isArrayExpression(parent)) {
-            const grand = path.parentPath.parentPath?.node;
+            const grand = parentPath.parentPath?.node;
             if (!grand) return false;
             if (t.isObjectProperty(grand) && grand.value === parent && !grand.computed) {
                 const keyName = this.getObjKeyName(grand.key);
@@ -993,6 +1030,79 @@ export class AstTranslator {
     // ====================================================================================================
     //                                      4. Helpers
     // ====================================================================================================
+
+    /**
+     * 可下钻的容器表达式：目前只认三元 (条件) 表达式。
+     *
+     * 提取侧 (collectStrNodes) 与翻译侧 (collectStrPaths) 共用此谓词，
+     * 「要不要展开」只在这一处定义，避免两侧口径漂移。
+     */
+    private isBranchContainer(node: t.Node | null | undefined): node is t.ConditionalExpression {
+        return !!node && t.isConditionalExpression(node);
+    }
+
+    /**
+     * 收集表达式位置上的可翻译字符串节点 (提取侧)
+     *
+     * 三元表达式的各分支会被递归展开，覆盖 `title: s ? void 0 : "文案"` 与
+     * `n ? "Removing..." : "Delete All Keys"` 这类写法。
+     * 非字符串分支 (void 0 / null / 变量 / 函数调用) 天然被跳过，无需特判。
+     *
+     * 必须与 collectStrPaths 保持对称——只改一侧会造成「提取得到、翻译不上」的假翻译。
+     */
+    private collectStrNodes(node: t.Node | null | undefined, depth = 0): (t.StringLiteral | t.TemplateLiteral)[] {
+        if (!node || depth > MAX_BRANCH_DEPTH) return [];
+        if (this.isStrNode(node)) return [node];
+        if (this.isBranchContainer(node)) {
+            return [
+                ...this.collectStrNodes(node.consequent, depth + 1),
+                ...this.collectStrNodes(node.alternate, depth + 1)
+            ];
+        }
+        return [];
+    }
+
+    /**
+     * 收集表达式位置上的字符串路径 (翻译侧，与 collectStrNodes 对称)
+     *
+     * 返回字符串自身的 NodePath，上下文判定由 liftBranchContext 负责上溯，
+     * 因此调用方只需原样把 path 交给 report()。
+     */
+    private collectStrPaths(basePath: any, depth = 0): Array<{ path: any, node: t.StringLiteral | t.TemplateLiteral }> {
+        const out: Array<{ path: any, node: t.StringLiteral | t.TemplateLiteral }> = [];
+        if (!basePath || !basePath.node || depth > MAX_BRANCH_DEPTH) return out;
+
+        const node = basePath.node;
+        if (this.isStrNode(node)) {
+            out.push({ path: basePath, node });
+            return out;
+        }
+        if (this.isBranchContainer(node)) {
+            out.push(...this.collectStrPaths(basePath.get('consequent'), depth + 1));
+            out.push(...this.collectStrPaths(basePath.get('alternate'), depth + 1));
+        }
+        return out;
+    }
+
+    /**
+     * 把三元分支内的字符串上溯到它真正的「表达式位置」
+     *
+     * `{ title: on ? "开" : "关" }` 中 "开" 的 parentPath 是 ConditionalExpression，
+     * 但它的上下文位置与整个三元表达式一致 (对象属性值 / 函数实参 / 二元比较…)。
+     * isStructuralContext / logicStringReason / describeLiteralContext 三个判定
+     * 都必须走这个上溯，否则三元内的文案会被误判为「非结构、非逻辑」，
+     * 既可能破坏 CSS 类名，也会让逻辑审计漏报。
+     *
+     * @returns 代表该字符串上下文的最外层节点及其父路径；不在三元分支内时原样返回
+     */
+    private liftBranchContext(path: any): { node: any, parentPath: any } | null {
+        if (!path || !path.node) return null;
+        let current = path;
+        while (current.parentPath && this.isBranchContainer(current.parentPath.node)) {
+            current = current.parentPath;
+        }
+        return { node: current.node, parentPath: current.parentPath };
+    }
 
     private parseAst(code: string, isModule: boolean) {
         try {

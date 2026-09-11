@@ -69,13 +69,25 @@ export const SHARED_REJECT_RULES: Array<[string, boolean]> = [
     ['^(click|dblclick|contextmenu|submit|reset|load|unload|abort|error|hashchange|popstate|message|online|offline|beforeunload)$', false]
 ];
 
+/**
+ * 省略号句末标点规则 —— 共享数据源 (AST 侧与 Regex 侧同源，防止再次漂移)
+ *
+ * 「Removing...」这类以 ASCII 省略号收尾的文案既没有空格、也不是纯单词，
+ * 会被 VALID_PATTERNS 整体拒绝，从而永远提取不到。
+ * 此处只放行 `...`，刻意不放开裸英文句点 `.`：
+ * 裸句点会把 "1.2." / "foo.bar." 这类机器取值一并放进来。
+ * (全角省略号 `…` 已由非 ASCII 规则 `[^\x00-\x7F]` 覆盖，无需重复列出。)
+ */
+export const ELLIPSIS_TAIL_RULE = '\\.{3}\\s*$';
+
 /** AST 提取的内容过滤规则 (正则表达式对象) */
 export const AST_DEFAULT_RULES = {
     REJECT_PATTERNS: SHARED_REJECT_RULES.map(([pattern, ignoreCase]) => new RegExp(pattern, ignoreCase ? 'i' : '')),
     VALID_PATTERNS: [
         /\s/,                                          // 包含空格 (通常是人类语言句子)
         /[^\x00-\x7F]/,                                // 包含非 ASCII 字符 (如中文)
-        /[!?,;:。！？，；：]\s*$/                        // 以标点符号结尾
+        /[!?,;:。！？，；：]\s*$/,                       // 以标点符号结尾
+        new RegExp(ELLIPSIS_TAIL_RULE)                 // 以省略号结尾 (如 "Removing...")
     ]
 };
 
@@ -373,15 +385,22 @@ export function isNonTranslatablePropName(key: string): boolean {
 // ============================================================================
 
 export const REGEX_DEFAULT_CONFIG = {
-    /** 核心匹配正则表达式字符串 (支持转义引号) */
+    /**
+     * 核心匹配正则表达式字符串 (支持转义引号)
+     *
+     * 字符类必须是 `[^\\\\]` (只排除反斜杠)。
+     * 历史版本写作 `[^\\\\2\\\\\\\\]`，解码后把「数字 2」也一并排除，
+     * 导致任何含 2 的候选文案 (如 description:"Item 2 of 10") 被静默漏掉。
+     */
     patterns: [
-        "(Notice|log|error|setText|setButtonText|setName|setDesc|setPlaceholder|setTooltip|appendText|setTitle|addHeading|renderMarkdown)\\(\\s*(['\"`])((?:[^\\\\2\\\\\\\\]|\\\\\\\\.)*?)\\2\\s*\\)",
-        "(textContent|innerText|name|description|selection|annotation|link|text|search|speech|page|settings)\\s*[:=]\\s*(['\"`])((?:[^\\\\2\\\\\\\\]|\\\\\\\\.)*?)\\2"
+        "(Notice|log|error|setText|setButtonText|setName|setDesc|setPlaceholder|setTooltip|appendText|setTitle|addHeading|renderMarkdown)\\(\\s*(['\"`])((?:[^\\\\]|\\\\\\\\.)*?)\\2\\s*\\)",
+        "(textContent|innerText|name|description|selection|annotation|link|text|search|speech|page|settings)\\s*[:=]\\s*(['\"`])((?:[^\\\\]|\\\\\\\\.)*?)\\2"
     ],
     /** 默认排除正则字符串列表 (取自 SHARED_REJECT_RULES，与 AST 侧同源) */
     rejectPatterns: SHARED_REJECT_RULES.map(([pattern]) => pattern),
-    /** 默认有效正则字符串列表 */
+    /** 默认有效正则字符串列表 (末尾追加省略号规则以与 AST 侧保持同源) */
     validPatterns: [
-        "\\s", "[^\\x00-\\x7F]", "[!?,;:。！？，；：]\\s*$"
+        "\\s", "[^\\x00-\\x7F]", "[!?,;:。！？，；：]\\s*$",
+        ELLIPSIS_TAIL_RULE
     ]
 };

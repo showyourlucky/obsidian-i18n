@@ -4,6 +4,7 @@ import './locales';     // 引入i18n配置
 
 import { App, Plugin, PluginManifest } from 'obsidian';
 import { DEFAULT_SETTINGS, I18nSettings, LLMProfile } from './settings/data';
+import { migrateSettings } from './settings/migrations';
 import { LLM_PROVIDERS } from './ai/constants';
 import { I18nSettingTab } from './settings';
 import { t } from './locales';
@@ -131,6 +132,10 @@ export default class I18N extends Plugin {
         }
 
         await this.migrateLLMProfiles();
+
+        // 出厂默认规则需要显式升级：老用户的 data.json 里保存着默认规则的副本，
+        // 仅修改 config.ts 的默认常量对他们不生效 (详见 settings/migrations.ts)
+        if (migrateSettings(this.settings)) await this.saveSettings();
     }
     // [配置类] 保存
     public async saveSettings() { await this.saveData(this.settings); }
