@@ -1345,8 +1345,21 @@ export class AstTranslator {
         return null;
     }
 
+    /**
+     * 解析调用表达式的函数名。
+     *
+     * 压缩产物里两次调用常被合并成逗号表达式 `(0, BI.jsx)(...)`——逗号左侧是
+     * `0`(丢弃副作用)，右侧才是真正的被调函数；`(0, r.createElement)(...)` /
+     * `(0, t.h)(...)` 同理。不解开这一层，函数白名单判断整体失配，
+     * 提取、翻译、结构判定、逻辑审计四条路径会一起静默失效。
+     */
     private getCallName(node: t.Node): string | null {
         if (t.isIdentifier(node)) return node.name;
+        // 逗号表达式：取最后一个表达式作为真正的 callee
+        if (t.isSequenceExpression(node)) {
+            const expressions = node.expressions;
+            return expressions.length > 0 ? this.getCallName(expressions[expressions.length - 1]) : null;
+        }
         if (t.isMemberExpression(node)) return this.getCallName(node.property);
         return null;
     }
