@@ -7,6 +7,27 @@
 // 1. AST 提取相关配置
 // ============================================================================
 
+/**
+ * 选项容器键默认值：这些属性名的值是「子键 → 选项文案」的映射对象
+ * (下拉框/单选按钮的 label 集合)，其直接子属性的字符串值是用户可见的选项文案，
+ * 应提取翻译。例如 open-tab-settings 插件:
+ *   modClickBehavior: {
+ *       name: "修饰键点击行为",
+ *       options: { allowDuplicate: "In duplicate tab", same: "In same tab" }
+ *   }
+ *
+ * 为什么做成设置可配 (astOptionContainerKeys)：
+ * 各插件对这类容器的命名不统一 (options / dropdownOptions / choices ...)，
+ * 新变体出现时用户在设置里补一行键名即可，无需改代码发版。
+ *
+ * 匹配口径 (在 traverseWhitelist 中实现)：
+ * - 只认「容器键的值是对象字面量」的形态，提取其【直接子属性】的字符串值；
+ * - 不递归深层嵌套 (避免把库的深层配置对象误提)；
+ * - 豁免 isValidText 内容过滤 ("ON"/"end" 这类短枚举标签是合法选项文案)；
+ * - 提取条目的 name 填子键名 (如 placeAfterActive)，为 AI 判定提供语境。
+ */
+export const OPTION_CONTAINER_DEFAULT_KEYS = ['options', 'dropdownOptions'];
+
 export const AST_DEFAULT_CONFIG = {
     // 变量赋值白名单 (例如: const title = "...")
     assignments: [

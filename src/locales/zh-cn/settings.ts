@@ -101,6 +101,13 @@ export default {
         FlagPlaceholder: "例: gs",
         LenTitle: "长度上限",
         LenDesc: "超过此长度的匹配结果将被丢弃，避免误捕大段代码。",
+        LenPlaceholder: "例: 300",
+
+        // ── 示例 ──
+        DataEditExample: "// 提取规则是一条 JS 正则，核心是捕获哪段文本\n// 常见形态: (键名|函数名)\\s*[:=]\\s*(['\"])文本\\2\n// 前缀决定在哪捕获，最后的捕获组进入翻译列表",
+        RejectReExample: "// 每行一条 JS 正则，匹配到的文本将被跳过\n// 例：跳过纯数字、kebab-case 标识、URL\n^\\d+$\n^[a-z0-9]+-[a-z0-9-]+$\n^https?:\\/\\/",
+        ValidReExample: "// 每行一条 JS 正则，只有匹配到的文本才保留\n// 例：含空格的句子、含中文、以省略号结尾\n\\s\n[^\\x00-\\x7F]\n\\.{3}\\s*$",
+        ExampleToggle: "查看示例",
         // ── 规则管理 ──
         DataHeader: "提取规则",
         DataEditTitle: "提取规则",
@@ -132,6 +139,19 @@ export default {
         KeyTitle: "对象键名",
         KeyDesc: "对象中这些键对应的值会被捕获，如 text、label。",
         KeyPlaceholder: "一行一个键名",
+        OptionContainerTitle: "选项容器键",
+        OptionContainerDesc: "这些属性名的值是「子键 → 选项文案」映射对象（下拉框/单选的选项集合），其直接子属性的字符串值会被捕获。不同插件对此命名不一（options、dropdownOptions…），发现新形态时在此补一行即可。注意：选项文案是合法短标签（如 'ON'/'end'），不受内容特征与下方排除规则约束。",
+        OptionContainerPlaceholder: "一行一个容器键名",
+        AssignExample: "// ✅ 会被捕获：属性名在白名单中\nthis.settings.name = \"Auto rename\";\nconst title = \"Rename note\";\n\n// ❌ 不会捕获：属性名不在白名单\nthis.count = 42;",
+        FuncExample: "// ✅ 会被捕获：函数名在白名单中\nnew Notice(\"File saved\");\nfileNameEl.setText(\"Untitled\");\n\n// ❌ 不会捕获：函数名不在白名单\nconsole.log(\"debug info\");",
+        KeyExample: "// ✅ 会被捕获：键名在白名单中，值为字符串\n{ text: \"Open file\", label: \"File name\" }\n\n// ❌ 不会捕获：键名不在白名单\n{ userData: \"cached\" }",
+        OptionContainerExample: "// ✅ 会被捕获：容器键的直接子属性字符串值\n// (子键名随意，无需在白名单中)\n{\n    modClickBehavior: {\n        name: \"修饰键点击行为\",\n        options: {\n            allowDuplicate: \"In duplicate tab\",\n            same: \"In same tab\",\n            tab: \"在新标签页中\"\n        }\n    }\n}\n\n// ❌ 不会捕获：数组形态 / 更深层嵌套\n{ options: [\"In same tab\"] }\n{ options: { deep: { a: \"label\" } } }",
+        RejectReExample: "// 每行一条 JS 正则，匹配到的文本将被跳过\n// 例：跳过纯数字、kebab-case 标识、URL\n^\\d+$\n^[a-z0-9]+-[a-z0-9-]+$\n^https?:\\/\\/",
+        ValidReExample: "// 每行一条 JS 正则，只有匹配到的文本才保留\n// 例：含空格的句子、含中文、以省略号结尾\n\\s\n[^\\x00-\\x7F]\n\\.{3}\\s*$",
+        NonTranslatablePropsExample: "// 例：某插件打包产物里的私有属性，值是内部枚举\next\nKCn\n\n// 效果：{ ext: \"ghost\" } 中的 \"ghost\" 不再被提取",
+        TranslatablePropsExample: "// 例：内置黑名单把 points 视为坐标枚举，\n// 但某插件确实用它承载文案，可在此放行\npoints\n\n// ⚠️ 放行 cls / type / 事件名会导致样式失效或交互损坏",
+        ExampleToggle: "查看示例",
+        StrictExample: "// 严格模式 (开启)：只替换 指纹 = 类型:名称:原文 完全一致的位置\n// 宽松模式 (默认)：指纹不一致时，只要上下文安全就按原文文本回退替换\n//\n// 宽松模式能命中压缩/重构后位置变动的文案，但极端情况下\n// 可能把别处同文本的字面量一并改写 (有上下文校验兜底)\n// 严格模式更保守，代价是部分译文可能失效",
         // ── 内容过滤 ──
         RegexHeader: "内容过滤",
         RejectReTitle: "排除规则",

@@ -444,3 +444,69 @@
 #immersive-translate-disc {
     display: none;
 }
+
+/* 设置页提取规则示例 (折叠代码块)
+----------------------------------------------------------------*/
+.i18n-rule-example {
+    margin-top: 4px;
+    font-size: var(--font-ui-smaller);
+}
+
+.i18n-rule-example summary {
+    cursor: pointer;
+    color: var(--text-faint);
+    user-select: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.i18n-rule-example summary:hover {
+    color: var(--text-muted);
+}
+
+.i18n-rule-example pre {
+    margin: 6px 0 0 0;
+    padding: 8px 12px;
+    border-radius: var(--radius-s);
+    background-color: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    overflow-x: auto;
+}
+
+.i18n-rule-example code {
+    font-family: var(--font-mono);
+    font-size: var(--font-ui-smaller);
+    color: var(--text-normal);
+    white-space: pre;
+}
+
+/* 设置项布局修正：描述过长时文本域独占一行
+----------------------------------------------------------------
+Obsidian 的 .setting-item 默认是「左信息 + 右控件」的横向 flex 布局。
+规则配置的描述很长 (还有折叠示例块)，会把右侧文本域挤得又窄又矮，
+因此对「名称 + 描述 + 文本域」形态的设置项单独处理：
+信息区占满一行，文本域另起一行并吃满整行宽度。
+*/
+.setting-item.i18n-setting-stacked {
+    display: block; /* 由横向 flex 改为纵向排列，info / control 各占一行 */
+}
+
+.setting-item.i18n-setting-stacked > .setting-item-info {
+    margin-bottom: 8px; /* 与下方文本域留出间距 */
+}
+
+.setting-item.i18n-setting-stacked > .setting-item-control {
+    width: 100%; /* 文本域控件吃满整行，不再被描述挤压 */
+}
+
+/* 设置页规则文本域：等宽字体 + 顺手的默认高度，内容多时自动长高 */
+.setting-item.i18n-setting-stacked textarea {
+    width: 100%;
+    min-width: 100%; /* 覆盖 Obsidian 文本域默认 max-width 限制 */
+    min-height: 90px;
+    resize: vertical; /* 允许用户手动拖高，禁止拖宽破坏布局 */
+    font-family: var(--font-mono);
+    font-size: var(--font-ui-smaller);
+    line-height: 1.5;
+}

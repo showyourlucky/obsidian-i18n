@@ -19,8 +19,8 @@ import type { I18nSettings } from '../../settings/data';
 import {
     AST_DEFAULT_CONFIG, AST_DEFAULT_RULES,
     HARDCODED_WORDS, LOGIC_BINARY_OPERATORS, LOGIC_STRING_METHODS, EVENT_LISTENER_METHODS, DOM_EVENT_NAMES,
-    DOM_CREATE_SHORTHAND_ARGS, STRUCTURAL_KEYS, DOM_CREATE_STRUCTURAL_KEYS, FRAMEWORK_CREATE_FUNCS,
-    isMachineValuedPropName, isFrameworkOnlyPropName
+    isMachineValuedPropName, isFrameworkOnlyPropName, OPTION_CONTAINER_DEFAULT_KEYS,
+    STRUCTURAL_KEYS, DOM_CREATE_STRUCTURAL_KEYS, FRAMEWORK_CREATE_FUNCS, DOM_CREATE_SHORTHAND_ARGS
 } from './config';
 
 /**
@@ -114,6 +114,8 @@ export class AstTranslator {
             assignments: this.settings?.astAssignments || AST_DEFAULT_CONFIG.assignments,
             functions: this.settings?.astFunctions || AST_DEFAULT_CONFIG.functions,
             keys: this.settings?.astKeys || AST_DEFAULT_CONFIG.keys,
+            // 选项容器键：设置里未配置时回退内置默认值 (与其它白名单的回退模式一致)
+            optionContainers: this.settings?.astOptionContainerKeys || OPTION_CONTAINER_DEFAULT_KEYS,
         };
 
         const userReject = (this.settings?.astRejectRe || []).map((re: string) => {
@@ -172,18 +174,23 @@ export class AstTranslator {
 
         this.traverseWhitelist(ast, (type, name, valueNode, extra) => {
             const source = this.extractSource(valueNode);
-            // 双重校验：上下文白名单 (implicit) + 内容有效性 (explicit)
-            if (source && this.isValidText(source)) {
-                results.push({
-                    type, name, source, target: source,
-                    start: valueNode.start ?? undefined,
-                    end: valueNode.end ?? undefined,
-                    line: valueNode.loc?.start.line ?? undefined,
-                    col: valueNode.loc?.start.column ?? undefined,
-                    propKey: extra?.propKey,
-                    argIndex: extra?.argIndex,
-                });
-            }
+            if (!source) return;
+            // 选项容器键提取的条目豁免「内容特征」过滤 (REJECT 模式 + VALID 特征 + 纯单词兜底)：
+            // "ON"/"end" 这类短枚举标签是合法选项文案，但过不了上述特征检查，需显式放行。
+            // 注意：不豁免第 0.1 段的强硬排除 (DOM 事件名 / 硬编码逻辑词)——
+            // 选项值若与事件名等逻辑词重名，翻译后会静默失效，这层防线必须保留。
+            const skipContentCheck = !!extra?.fromOptionContainer;
+            // 双重校验：上下文白名单 (implicit) + 内容有效性 (explicit，选项容器仅豁免特征检查)
+            if (this.isHardExcludedText(source) || (!skipContentCheck && !this.isValidText(source))) return;
+            results.push({
+                type, name, source, target: source,
+                start: valueNode.start ?? undefined,
+                end: valueNode.end ?? undefined,
+                line: valueNode.loc?.start.line ?? undefined,
+                col: valueNode.loc?.start.column ?? undefined,
+                propKey: extra?.propKey,
+                argIndex: extra?.argIndex,
+            });
         });
 
         return this.deduplicateResults(results);
@@ -224,7 +231,9 @@ export class AstTranslator {
         });
 
         // 2. 遍历所有字符串节点 (不限于白名单，以支持手动添加的条目)
-        this.traverseAllStrings(ast, (type, name, valueNode, safe, structural) => {
+        // extra 透传：选项容器提取的条目 name 是子键名，不在 keys 白名单里，
+        // 需要靠 fromOptionContainer 标志在宽松回退中放行 (isWhitelistedContext)
+        this.traverseAllStrings(ast, (type, name, valueNode, safe, structural, _logic, extra) => {
             const source = this.extractSource(valueNode);
             // 类名 / 标签名 / 标识符：命中也不替换 (历史翻译包里可能残留这类条目)
             if (!source || structural) return;
@@ -232,7 +241,7 @@ export class AstTranslator {
             // 尝试匹配
             let target = strictMap.get(this.getFingerprint({ type, name, source } as any));
             // 严格匹配失败时，仅当该字符串不参与程序逻辑才允许回退
-            if (!target && allowLoose && safe && this.isWhitelistedContext(type, name)) {
+            if (!target && allowLoose && safe && this.isWhitelistedContext(type, name, extra)) {
                 target = looseMap.get(source);
             }
 
@@ -272,15 +281,15 @@ export class AstTranslator {
             looseMap.set(item.source, item.target);
         });
 
-        // 2. 遍历所有匹配项 (口径与 translate() 保持一致)
-        this.traverseAllStrings(ast, (type, name, valueNode, safe, structural) => {
+        // 2. 遍历所有匹配项 (口径与 translate() 保持一致，extra 同样透传)
+        this.traverseAllStrings(ast, (type, name, valueNode, safe, structural, _logic, extra) => {
             const source = this.extractSource(valueNode);
             if (!source || structural) return;
 
             const fingerprint = this.getFingerprint({ type, name, source } as any);
             if (strictMap.has(fingerprint)) {
                 hitFingerprints.add(fingerprint);
-            } else if (allowLoose && safe && this.isWhitelistedContext(type, name) && looseMap.has(source)) {
+            } else if (allowLoose && safe && this.isWhitelistedContext(type, name, extra) && looseMap.has(source)) {
                 // 如果严格匹配失败但宽松匹配成功，记录下宽松匹配的标示
                 hitFingerprints.add(source);
             }
@@ -744,6 +753,16 @@ export class AstTranslator {
     // ====================================================================================================
 
     /**
+     * 系统强硬排除：DOM 事件名与硬编码逻辑词
+     * 这层防线独立于内容特征检查，任何提取来源 (包括选项容器豁免条目) 都不得绕过，
+     * 否则翻译参与程序逻辑的字符串会导致对应功能静默失效
+     */
+    private isHardExcludedText(text: string): boolean {
+        const lower = text.toLowerCase();
+        return DOM_EVENT_NAMES.has(lower) || HARDCODED_WORDS.has(text);
+    }
+
+    /**
      * 判断文本内容是否是有效的 UI 文本
      * 策略：必须通过 REJECT 检查，且必须满足至少一个 VALID 特征
      */
@@ -752,8 +771,7 @@ export class AstTranslator {
         if (!text || text.length < 2) return false;
 
         // 0.1 系统强硬排除：DOM 事件名与硬编码逻辑词
-        const lower = text.toLowerCase();
-        if (DOM_EVENT_NAMES.has(lower) || HARDCODED_WORDS.has(text)) {
+        if (this.isHardExcludedText(text)) {
             return false;
         }
 
@@ -790,7 +808,7 @@ export class AstTranslator {
             type: string,
             name: string,
             valueNode: t.StringLiteral | t.TemplateLiteral,
-            extra?: { propKey?: string; argIndex?: number }
+            extra?: { propKey?: string; argIndex?: number; fromOptionContainer?: boolean }
         ) => void
     ) {
         const isFrameworkCreateCall = (name: string, node: t.CallExpression | t.NewExpression): boolean => {
@@ -818,12 +836,36 @@ export class AstTranslator {
                 }
             },
             // 3. 对象属性 ({ name: "..." } / { title: cond ? "a" : "b" })
+            // 3.5 选项容器键 ({ options: { allowDuplicate: "In duplicate tab", ... } })
+            // 容器键 (settings.astOptionContainerKeys) 的值是「子键 → 选项文案」映射对象，
+            // 其直接子属性的字符串值是下拉框/单选的选项文案，用户可见，需要翻译。
+            // 与常规 keys 白名单的差异：
+            //   1. 子键名 (allowDuplicate/placeAfterActive...) 是插件作者自拟的，不可能枚举，只能靠容器键定位；
+            //   2. "ON"/"end" 这类短枚举标签过不了 isValidText，extract 侧对此豁免内容过滤；
+            //   3. 子键名填入 name 字段，为 AI 判定提供「这是某选项的标签」的语境。
             ObjectProperty: (path) => {
                 const node = path.node;
                 const name = this.getObjKeyName(node.key);
-                if (name && this.config.keys.includes(name) && !this.isStructuralKey(name)) {
+                if (!name) return;
+
+                // 3. 常规白名单键
+                if (this.config.keys.includes(name) && !this.isStructuralKey(name)) {
                     this.collectStrNodes(node.value).forEach(str => {
                         callback('ObjectProperty', name, str, { propKey: name });
+                    });
+                    return;
+                }
+
+                // 3.5 选项容器键：只认对象字面量形态，提取直接子属性的字符串值 (含三元分支)，
+                // 不递归更深层对象，避免把插件配置对象里同名的机器取值一并拖进来
+                if (this.config.optionContainers.includes(name) && t.isObjectExpression(node.value)) {
+                    node.value.properties.forEach(prop => {
+                        if (!t.isObjectProperty(prop)) return;
+                        const subKey = this.getObjKeyName(prop.key);
+                        if (!subKey) return;
+                        this.collectStrNodes(prop.value).forEach(str => {
+                            callback('ObjectProperty', subKey, str, { propKey: subKey, fromOptionContainer: true });
+                        });
                     });
                 }
             },
@@ -933,7 +975,8 @@ export class AstTranslator {
             valueNode: t.StringLiteral | t.TemplateLiteral,
             safe: boolean,
             structural: boolean,
-            logic?: LogicStringInfo | null
+            logic?: LogicStringInfo | null,
+            extra?: { fromOptionContainer?: boolean }
         ) => void
     ) {
         /** 上报一个字符串节点，并同步计算其上下文安全性 */
@@ -941,10 +984,11 @@ export class AstTranslator {
             strPath: any,
             type: string,
             name: string,
-            valueNode: t.StringLiteral | t.TemplateLiteral
+            valueNode: t.StringLiteral | t.TemplateLiteral,
+            extra?: { fromOptionContainer?: boolean }
         ) => {
             const logic = this.logicStringReason(strPath);
-            callback(type, name, valueNode, logic === null, this.isStructuralContext(strPath), logic);
+            callback(type, name, valueNode, logic === null, this.isStructuralContext(strPath), logic, extra);
         };
 
         traverse(ast, {
@@ -966,10 +1010,17 @@ export class AstTranslator {
                 const node = path.node;
                 const name = this.getObjKeyName(node.key) || 'prop';
                 const valuePath = path.get('value');
+                // 与提取侧 (3.5) 口径对齐：若本属性的父对象是选项容器键的值，
+                // 则本属性的字符串视为选项文案，透传 fromOptionContainer 标志供宽松回退放行
+                const containerProp = path.parentPath?.parentPath?.node;
+                const extra = t.isObjectProperty(containerProp)
+                    && this.config.optionContainers.includes(this.getObjKeyName(containerProp.key) || '')
+                    ? { fromOptionContainer: true }
+                    : undefined;
                 // 与提取侧对称：三元分支内的字符串同样要进入替换/诊断范围，
                 // 否则会出现「列表里有、翻译不上」的假翻译
                 const strPaths = this.collectStrPaths(valuePath);
-                strPaths.forEach(s => report(s.path, 'ObjectProperty', name, s.node));
+                strPaths.forEach(s => report(s.path, 'ObjectProperty', name, s.node, extra));
                 if (strPaths.length === 0 && t.isArrayExpression(node.value)) {
                     // children 数组 (如 { children: ["a", "b"] })，与提取侧对称
                     const elPaths = (valuePath as any).get('elements') as any[];
@@ -1185,12 +1236,15 @@ export class AstTranslator {
      * 用于收紧宽松回退：仅当字面量确实落在 UI 文案上下文 (白名单的 变量/赋值/对象键/函数调用)
      * 时才允许按 source 文本兜底替换，避免把内部 action 常量 (如 s('REMOVE',…)) 一并改写。
      */
-    private isWhitelistedContext(type: string, name: string): boolean {
+    private isWhitelistedContext(type: string, name: string, extra?: { fromOptionContainer?: boolean }): boolean {
         if (!name) return false;
         if (type === 'VariableDeclarator' || type === 'AssignmentExpression') {
             return this.config.assignments.includes(name);
         }
         if (type === 'ObjectProperty') {
+            // 选项容器键提取的条目 name 填的是子键名 (如 placeAfterActive)，不在 keys 白名单里，
+            // 由提取侧透传的 fromOptionContainer 标志放行，否则宽松回退会漏替换
+            if (extra?.fromOptionContainer) return true;
             return this.config.keys.includes(name) && !this.isStructuralKey(name);
         }
         if (type === 'CallExpression' || type === 'NewExpression') {

@@ -1,7 +1,7 @@
 import { pageRule } from '../utils';
 import { DEFAULT_AST_PROMPT_TEMPLATE, DEFAULT_JUDGE_PROMPT_TEMPLATE, DEFAULT_REGEX_PROMPT_TEMPLATE, DEFAULT_THEME_PROMPT_TEMPLATE } from '../ai/prompts';
 import { LLM_PROVIDERS } from '../ai/constants';
-import { AST_DEFAULT_CONFIG, REGEX_DEFAULT_CONFIG } from '../utils/translator/config';
+import { AST_DEFAULT_CONFIG, OPTION_CONTAINER_DEFAULT_KEYS, REGEX_DEFAULT_CONFIG } from '../utils/translator/config';
 
 export interface LLMProfile {
     id: string;
@@ -206,6 +206,7 @@ export interface I18nSettings {
     astAssignments: string[]; // 赋值白名单
     astFunctions: string[];   // 函数白名单
     astKeys: string[];        // 键名白名单
+    astOptionContainerKeys: string[]; // 选项容器键 (其值对象的直接子属性字符串视为选项文案，见 OPTION_CONTAINER_DEFAULT_KEYS)
     astRejectRe: string[];   // 排除正则 (字符串形式)
     astValidRe: string[];    // 有效正则 (字符串形式)
     astNonTranslatableProps: string[]; // 非可译属性名 (对象键，其值一律视为机器取值)
@@ -564,6 +565,7 @@ export const DEFAULT_SETTINGS: I18nSettings = {
     astAssignments: AST_DEFAULT_CONFIG.assignments,
     astFunctions: AST_DEFAULT_CONFIG.functions,
     astKeys: AST_DEFAULT_CONFIG.keys,
+    astOptionContainerKeys: OPTION_CONTAINER_DEFAULT_KEYS,
     astRejectRe: REGEX_DEFAULT_CONFIG.rejectPatterns, // Regex defaults are used as strings for UI
     astValidRe: REGEX_DEFAULT_CONFIG.validPatterns,
     astNonTranslatableProps: [], // 默认表未收录的插件私有属性名，由用户按需补充
