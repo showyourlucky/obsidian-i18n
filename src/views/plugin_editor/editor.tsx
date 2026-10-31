@@ -4,13 +4,14 @@ import * as fs from 'fs-extra';
 import { ItemView, WorkspaceLeaf } from 'obsidian';
 import { Root } from 'react-dom/client';
 
-import { PluginTranslationV1, PluginTranslationV1Regex, PluginTranslationFileDict } from 'src/types';
+import { PluginTranslationV1, PluginTranslationV1Regex, PluginTranslationFileDict, PluginExtractRules } from 'src/types';
 import I18N from "src/main";
 
 import { Button, Tabs, TabsContent, TabsList, TabsTrigger, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, Input, Label, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Card, Badge, ResizablePanelGroup, ResizablePanel, ResizableHandle, ScrollArea } from '~/shadcn';
-import { Save, Loader2, Plus, Trash2, ChevronDown, Folder, File, Info, Calendar, Hash, ChevronRight } from 'lucide-react';
+import { Save, Loader2, Plus, Trash2, ChevronDown, Folder, File, Info, Calendar, Hash, ChevronRight, SlidersHorizontal } from 'lucide-react';
 import { useRegexStore } from './store';
 import { astDictKey } from './store/dict-slice';
+import { PluginRulesDialog } from './components/common/plugin-rules-dialog';
 
 import { EditorProps, DiagnoseError, SourceFingerprint, SourceOrigin, sourceCacheKey } from './types';
 import { EDITOR_EVENTS } from './events';
@@ -193,8 +194,38 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
     const [isAddPathDialogOpen, setIsAddPathDialogOpen] = useState(false);
     const [newPathInput, setNewPathInput] = useState('');
 
-    const astTranslator = useMemo(() => new AstTranslator(i18n.settings), [i18n.settings]);
-    const regexTranslator = useMemo(() => new RegexTranslator(i18n.settings), [i18n.settings]);
+    // 插件专属提取规则 (extract-rules sidecar)：编辑规则后 bump 版本号让 memo 重建翻译器，
+    // 侧同步 coreManager.resetTranslators(pluginId) 使提取/注入/诊断三条路径口径一致
+    const editingPluginId = pluginTranslation?.metadata?.plugin ?? '';
+    const [pluginRulesVersion, setPluginRulesVersion] = useState(0);
+    const [isRulesDialogOpen, setIsRulesDialogOpen] = useState(false);
+    const pluginRules = useMemo(
+        () => (editingPluginId ? i18n.sourceManager.getPluginExtractRules(editingPluginId) : null),
+        [i18n, editingPluginId, pluginRulesVersion]
+    );
+    const handleSavePluginRules = React.useCallback((rules: PluginExtractRules | null): boolean => {
+        if (!editingPluginId) return false;
+        if (!i18n.sourceManager.savePluginExtractRules(editingPluginId, rules)) {
+            notice.error(t('Editor.Notices.PluginRulesSaveFailed', '插件专属提取规则保存失败，请检查文件写入权限'));
+            return false;
+        }
+        // 使注入/管理器路径的 per-plugin 翻译器缓存失效，与编辑器 memo 重建同步
+        i18n.coreManager.resetTranslators(editingPluginId);
+        setPluginRulesVersion(v => v + 1);
+        notice.success(rules
+            ? t('Editor.Notices.PluginRulesSaved', '插件专属提取规则已保存')
+            : t('Editor.Notices.PluginRulesCleared', '插件专属提取规则已清空'));
+        return true;
+    }, [i18n, editingPluginId, notice, t]);
+
+    const astTranslator = useMemo(
+        () => i18n.coreManager.getAstTranslator(editingPluginId || undefined),
+        [i18n, editingPluginId, pluginRulesVersion]
+    );
+    const regexTranslator = useMemo(
+        () => i18n.coreManager.getRegexTranslator(editingPluginId || undefined),
+        [i18n, editingPluginId, pluginRulesVersion]
+    );
 
 
     useEffect(() => {
@@ -285,181 +316,9 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
         }
     }, [loggerPrefix, t]);
 
-    // ================================================== Incremental Extract ==================================================
-    const incrementalExtractAst = React.useCallback(async () => {
-        try {
-            const { metadata } = useRegexStore.getState();
-            if (!metadata) return;
-
-            // 安全检查：如果已应用，禁止增量提取
-            const isApplied = !!i18n.stateManager.getPluginState(metadata.plugin)?.isApplied;
-            if (isApplied) {
-                notice.error(t('Editor.Actions.IncrementalExtractDisabledTip'));
-                return;
-            }
-
-            const pluginId = metadata.plugin;
-            const currentFile = useRegexStore.getState().currentFile;
-            // @ts-ignore
-            const manifest = i18n.app.plugins.manifests[pluginId];
-            if (!manifest) return;
-
-            // @ts-ignore
-            const basePath = path.normalize(i18n.app.vault.adapter.getBasePath());
-            const fileDoc = path.join(basePath, manifest.dir || '', currentFile);
-
-            if (!fs.existsSync(fileDoc)) {
-                notice.error(t('Common.Notices.MainNotFound').replace('main.js', currentFile) + ` (${currentFile})`);
-                return;
-            }
-
-            const mainStr = fs.readFileSync(fileDoc).toString();
-            const astTranslator = new AstTranslator(i18n.settings);
-            const ast = astTranslator.loadCode(mainStr);
-
-            if (ast) {
-                const newAstItems = astTranslator.extract(ast);
-                const currentAstItems = useRegexStore.getState().astItems;
-
-                // 合并新旧数据
-                const merged = mergeAstItems(currentAstItems, newAstItems);
-
-                // 翻译记忆回填：命中记忆的无译文条目直接复用历史译文，无需再走 AI 翻译
-                let mergedItems: typeof merged = merged;
-                let memoryHitCount = 0;
-                if (i18n.settings.translationMemoryEnabled) {
-                    const memoryIndex = buildMemoryIndex(
-                        i18n.translationMemory.getPluginMemory(pluginId, memoryLanguage(metadata, i18n))
-                    );
-                    const applied = applyTranslationMemory(merged, memoryIndex);
-                    mergedItems = applied.items;
-                    memoryHitCount = applied.hitCount;
-                }
-
-                // 按 per-file 标记集合回标：条目被删除后重新提取时自动恢复「不需要翻译」标记
-                const { dictData, currentFile: file } = useRegexStore.getState();
-                const ignoredSet = new Set(dictData[file]?.ignoredKeys?.ast ?? []);
-
-                // 更新 store (重新分配 ID 以保证唯一性和连续性)
-                setAstItems(mergedItems.map((item, index) => ({
-                    ...item,
-                    id: index,
-                    ignored: item.ignored || ignoredSet.has(astDictKey(item))
-                })));
-                notice.success(t('Editor.Notices.SuccessIncrementalExtract') +
-                    (memoryHitCount > 0 ? `，${t('Editor.Hints.MemoryReusedCount', { count: memoryHitCount })}` : ''));
-            }
-        } catch (e) {
-            notice.error(t('Editor.Errors.SyntaxErrorAst') + ': ' + e);
-        }
-    }, [i18n, notice, t, setAstItems]);
-
-    const incrementalExtractRegex = React.useCallback(async () => {
-        try {
-            const { metadata } = useRegexStore.getState();
-            if (!metadata) return;
-
-            // 安全检查：如果已应用，禁止增量提取
-            const isApplied = !!i18n.stateManager.getPluginState(metadata.plugin)?.isApplied;
-            if (isApplied) {
-                notice.error(t('Editor.Actions.IncrementalExtractDisabledTip'));
-                return;
-            }
-
-            const pluginId = metadata.plugin;
-            const currentFile = useRegexStore.getState().currentFile;
-            // @ts-ignore
-            const manifest = i18n.app.plugins.manifests[pluginId];
-            if (!manifest) return;
-
-            // @ts-ignore
-            const basePath = path.normalize(i18n.app.vault.adapter.getBasePath());
-            const fileDoc = path.join(basePath, manifest.dir || '', currentFile);
-
-            if (!fs.existsSync(fileDoc)) {
-                notice.error(t('Common.Notices.MainNotFound', { file: currentFile }));
-                return;
-            }
-
-            const mainStr = fs.readFileSync(fileDoc).toString();
-
-            const regexTranslator = new RegexTranslator(i18n.settings);
-            const newRegexItems = regexTranslator.extractTranslationsByRegex(mainStr);
-            const currentRegexItems = useRegexStore.getState().regexItems;
-
-            // 合并新旧数据
-            const merged = mergeRegexItems(currentRegexItems, newRegexItems);
-
-            // 翻译记忆回填：命中记忆的无译文条目直接复用历史译文，无需再走 AI 翻译
-            let mergedItems: typeof merged = merged;
-            let memoryHitCount = 0;
-            if (i18n.settings.translationMemoryEnabled) {
-                const memoryIndex = buildMemoryIndex(
-                    i18n.translationMemory.getPluginMemory(pluginId, memoryLanguage(metadata, i18n))
-                );
-                const applied = applyTranslationMemory(merged, memoryIndex);
-                mergedItems = applied.items;
-                memoryHitCount = applied.hitCount;
-            }
-
-            // 按 per-file 标记集合回标：条目被删除后重新提取时自动恢复「不需要翻译」标记
-            const { dictData, currentFile: file } = useRegexStore.getState();
-            const ignoredSet = new Set(dictData[file]?.ignoredKeys?.regex ?? []);
-
-            // 更新 store (重新分配 ID)
-            setRegexItems(mergedItems.map((item, index) => ({
-                ...item,
-                id: index,
-                ignored: item.ignored || ignoredSet.has(item.source)
-            })));
-            notice.success(t('Editor.Notices.SuccessIncrementalExtract') +
-                (memoryHitCount > 0 ? `，${t('Editor.Hints.MemoryReusedCount', { count: memoryHitCount })}` : ''));
-        } catch (e) {
-            notice.error(t('Editor.Errors.SyntaxErrorRegex') + ': ' + e);
-        }
-    }, [i18n, notice, t, setRegexItems]);
-
-    // ================================================== Open File ==================================================
-    const handleOpenFile = React.useCallback(async () => {
-        try {
-            const { metadata } = useRegexStore.getState();
-            if (!metadata) return;
-
-            const pluginId = metadata.plugin;
-            const currentFile = useRegexStore.getState().currentFile;
-            // @ts-ignore
-            const manifest = i18n.app.plugins.manifests[pluginId];
-            if (!manifest) return;
-
-            // @ts-ignore
-            const basePath = path.normalize(i18n.app.vault.adapter.getBasePath());
-            const fileDoc = path.join(basePath, manifest.dir || '', currentFile);
-
-            if (!fs.existsSync(fileDoc)) {
-                notice.error(t('Common.Notices.MainNotFound', { file: currentFile }));
-                return;
-            }
-
-            const { i18nOpen } = await import('~/utils/common/general');
-            i18nOpen(i18n, fileDoc);
-        } catch (e) {
-            notice.error(t('Editor.Actions.OpenFile') + ' ' + t('Common.Status.Failure') + ': ' + e);
-        }
-    }, [i18n, notice, t]);
-
-    // 上下文预览：定位单元格「在源码中查看」触发打开当前文件
-    React.useEffect(() => {
-        const handler = () => { handleOpenFile(); };
-        window.addEventListener(EDITOR_EVENTS.OpenSource, handler);
-        return () => window.removeEventListener(EDITOR_EVENTS.OpenSource, handler);
-    }, [handleOpenFile]);
-
-
-    // ================================================== Diagnose ==================================================
-
     /**
      * 解析当前文件的原始源码 (内存缓存 → 磁盘 → 备份)
-     * 语法诊断 / 冗余诊断 / 逻辑审计 共用同一套取源口径
+     * 增量提取 / 语法诊断 / 冗余诊断 / 逻辑审计共用同一套取源口径
      *
      * 缓存命中时先用磁盘指纹 (mtime + size) 校验：插件更新或手动改写会导致
      * main.js 被整体替换，此时缓存内容与条目里的 start/end 已对不上，
@@ -540,6 +399,137 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
         setSourceCache(pluginId, currentFile, code, origin);
         return { code, currentFile, pluginId };
     }, [i18n, notice, t]);
+
+    // ================================================== Incremental Extract ==================================================
+    const incrementalExtractAst = React.useCallback(async () => {
+        try {
+            const { metadata } = useRegexStore.getState();
+            if (!metadata) return;
+
+            const sourceContext = await resolveSourceContext();
+            if (!sourceContext) return;
+            const { code: mainStr, pluginId } = sourceContext;
+            const astTranslator = i18n.coreManager.getAstTranslator(pluginId);
+            const ast = astTranslator.loadCode(mainStr);
+
+            if (ast) {
+                const newAstItems = astTranslator.extract(ast);
+                const currentAstItems = useRegexStore.getState().astItems;
+
+                // 合并新旧数据
+                const merged = mergeAstItems(currentAstItems, newAstItems);
+
+                // 翻译记忆回填：命中记忆的无译文条目直接复用历史译文，无需再走 AI 翻译
+                let mergedItems: typeof merged = merged;
+                let memoryHitCount = 0;
+                if (i18n.settings.translationMemoryEnabled) {
+                    const memoryIndex = buildMemoryIndex(
+                        i18n.translationMemory.getPluginMemory(pluginId, memoryLanguage(metadata, i18n))
+                    );
+                    const applied = applyTranslationMemory(merged, memoryIndex);
+                    mergedItems = applied.items;
+                    memoryHitCount = applied.hitCount;
+                }
+
+                // 按 per-file 标记集合回标：条目被删除后重新提取时自动恢复「不需要翻译」标记
+                const { dictData, currentFile: file } = useRegexStore.getState();
+                const ignoredSet = new Set(dictData[file]?.ignoredKeys?.ast ?? []);
+
+                // 更新 store (重新分配 ID 以保证唯一性和连续性)
+                setAstItems(mergedItems.map((item, index) => ({
+                    ...item,
+                    id: index,
+                    ignored: item.ignored || ignoredSet.has(astDictKey(item))
+                })));
+                notice.success(t('Editor.Notices.SuccessIncrementalExtract') +
+                    (memoryHitCount > 0 ? `，${t('Editor.Hints.MemoryReusedCount', { count: memoryHitCount })}` : ''));
+            }
+        } catch (e) {
+            notice.error(t('Editor.Errors.SyntaxErrorAst') + ': ' + e);
+        }
+    }, [i18n, notice, t, setAstItems, resolveSourceContext]);
+
+    const incrementalExtractRegex = React.useCallback(async () => {
+        try {
+            const { metadata } = useRegexStore.getState();
+            if (!metadata) return;
+
+            const sourceContext = await resolveSourceContext();
+            if (!sourceContext) return;
+            const { code: mainStr, pluginId } = sourceContext;
+            const regexTranslator = i18n.coreManager.getRegexTranslator(pluginId);
+            const newRegexItems = regexTranslator.extractTranslationsByRegex(mainStr);
+            const currentRegexItems = useRegexStore.getState().regexItems;
+
+            // 合并新旧数据
+            const merged = mergeRegexItems(currentRegexItems, newRegexItems);
+
+            // 翻译记忆回填：命中记忆的无译文条目直接复用历史译文，无需再走 AI 翻译
+            let mergedItems: typeof merged = merged;
+            let memoryHitCount = 0;
+            if (i18n.settings.translationMemoryEnabled) {
+                const memoryIndex = buildMemoryIndex(
+                    i18n.translationMemory.getPluginMemory(pluginId, memoryLanguage(metadata, i18n))
+                );
+                const applied = applyTranslationMemory(merged, memoryIndex);
+                mergedItems = applied.items;
+                memoryHitCount = applied.hitCount;
+            }
+
+            // 按 per-file 标记集合回标：条目被删除后重新提取时自动恢复「不需要翻译」标记
+            const { dictData, currentFile: file } = useRegexStore.getState();
+            const ignoredSet = new Set(dictData[file]?.ignoredKeys?.regex ?? []);
+
+            // 更新 store (重新分配 ID)
+            setRegexItems(mergedItems.map((item, index) => ({
+                ...item,
+                id: index,
+                ignored: item.ignored || ignoredSet.has(item.source)
+            })));
+            notice.success(t('Editor.Notices.SuccessIncrementalExtract') +
+                (memoryHitCount > 0 ? `，${t('Editor.Hints.MemoryReusedCount', { count: memoryHitCount })}` : ''));
+        } catch (e) {
+            notice.error(t('Editor.Errors.SyntaxErrorRegex') + ': ' + e);
+        }
+    }, [i18n, notice, t, setRegexItems, resolveSourceContext]);
+
+    // ================================================== Open File ==================================================
+    const handleOpenFile = React.useCallback(async () => {
+        try {
+            const { metadata } = useRegexStore.getState();
+            if (!metadata) return;
+
+            const pluginId = metadata.plugin;
+            const currentFile = useRegexStore.getState().currentFile;
+            // @ts-ignore
+            const manifest = i18n.app.plugins.manifests[pluginId];
+            if (!manifest) return;
+
+            // @ts-ignore
+            const basePath = path.normalize(i18n.app.vault.adapter.getBasePath());
+            const fileDoc = path.join(basePath, manifest.dir || '', currentFile);
+
+            if (!fs.existsSync(fileDoc)) {
+                notice.error(t('Common.Notices.MainNotFound', { file: currentFile }));
+                return;
+            }
+
+            const { i18nOpen } = await import('~/utils/common/general');
+            i18nOpen(i18n, fileDoc);
+        } catch (e) {
+            notice.error(t('Editor.Actions.OpenFile') + ' ' + t('Common.Status.Failure') + ': ' + e);
+        }
+    }, [i18n, notice, t]);
+
+    // 上下文预览：定位单元格「在源码中查看」触发打开当前文件
+    React.useEffect(() => {
+        const handler = () => { handleOpenFile(); };
+        window.addEventListener(EDITOR_EVENTS.OpenSource, handler);
+        return () => window.removeEventListener(EDITOR_EVENTS.OpenSource, handler);
+    }, [handleOpenFile]);
+
+
+    // ================================================== Diagnose ==================================================
 
     // 上下文预览：定位弹窗懒加载源码 (缓存未命中时读磁盘/备份，静默模式)
     React.useEffect(() => {
@@ -814,8 +804,11 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
             const { code: originalCode } = sourceContext;
 
             const results: DiagnoseError[] = [];
-            const astTranslator = new AstTranslator(i18n.settings);
-            const regexTranslator = new RegexTranslator(i18n.settings);
+            // 冗余诊断口径必须与提取/注入一致：traceUsage 按指纹匹配，插件专属规则
+            // 提取出的条目 (如 partN) 需要同样的规则集才不会被误报为「未使用」
+            const { metadata: diagnoseMetadata } = useRegexStore.getState();
+            const astTranslator = i18n.coreManager.getAstTranslator(diagnoseMetadata?.plugin);
+            const regexTranslator = i18n.coreManager.getRegexTranslator(diagnoseMetadata?.plugin);
 
             // 1. AST 冗余诊断
             const baseAst = astTranslator.loadCode(originalCode);
@@ -1201,6 +1194,17 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
                                         <TemplateCard title={t('Editor.Titles.Main')} icon={Folder}>
                                             <div className="flex flex-col gap-3">
                                                 <SaveButton onSave={save} isSaving={isSaving} />
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="h-8 w-full text-xs gap-1.5"
+                                                    onClick={() => setIsRulesDialogOpen(true)}
+                                                    disabled={!editingPluginId}
+                                                    title={t('Editor.Dialogs.PluginRulesDesc', '仅对当前插件生效，与全局白名单取并集追加')}
+                                                >
+                                                    <SlidersHorizontal className="w-3.5 h-3.5" />
+                                                    {t('Editor.Actions.PluginRules', '本插件专属规则')}
+                                                </Button>
                                                 <TabsList className="w-full h-9 p-1.5 bg-muted/50 grid grid-cols-2">
                                                     <TabsTrigger className="text-xs data-[state=active]:shadow-sm" value="ast">AST</TabsTrigger>
                                                     <TabsTrigger className="text-xs data-[state=active]:shadow-sm" value="regex">Regex</TabsTrigger>
@@ -1383,6 +1387,15 @@ const ReactEditor: React.FC<EditorProps> = (_) => {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+
+            {/* 本插件专属提取规则编辑弹窗 */}
+            <PluginRulesDialog
+                open={isRulesDialogOpen}
+                onOpenChange={setIsRulesDialogOpen}
+                pluginId={editingPluginId}
+                initialRules={pluginRules}
+                onSave={handleSavePluginRules}
+            />
         </Tabs>
     );
 };

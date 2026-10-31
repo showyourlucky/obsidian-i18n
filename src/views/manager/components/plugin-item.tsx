@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { Settings, FolderOpen, Pen, FileOutput, XCircle, Loader2, MoreHorizontal, CloudDownload, Cloud } from 'lucide-react';
 import I18N from 'src/main';
 import { PluginTranslationV1, PluginTranslationFileDict } from 'src/types';
-import { i18nOpen, AstTranslator, RegexTranslator, isValidPluginTranslationV1Format, applyTranslationMemory, buildMemoryIndex, collectLearnable } from '../../../utils';
+import { i18nOpen, isValidPluginTranslationV1Format, applyTranslationMemory, buildMemoryIndex, collectLearnable } from '../../../utils';
 import { loadTranslationFile } from '../../../manager/io-manager';
 import { useGlobalStoreInstance } from '~/utils';
 import { EDITOR_VIEW_TYPE } from '../../../views';
@@ -184,7 +184,9 @@ export const PluginItem: React.FC<PluginItemProps> = React.memo(({ plugin, i18n,
             // 延时一下避免 UI 冻结感
             await new Promise(resolve => setTimeout(resolve, 0));
             const { generatePlugin } = await import('../../../utils');
-            const translationJson = generatePlugin(plugin.version, manifestJSON, mainStr, settings.language, i18n.settings);
+            // 传入该插件的生效提取设置 (全局 + 插件专属规则并集)，与注入/编辑器口径一致
+            const effectiveSettings = i18n.coreManager.getEffectiveSettings(plugin.id);
+            const translationJson = generatePlugin(plugin.version, manifestJSON, mainStr, settings.language, effectiveSettings);
 
             // 翻译记忆回填：新提取的条目按上下文复用历史译文，命中部分无需再走 AI 翻译
             let memoryHitCount = 0;
@@ -244,7 +246,7 @@ export const PluginItem: React.FC<PluginItemProps> = React.memo(({ plugin, i18n,
                     let fileString = fs.readFileSync(targetFilePath).toString();
 
                     if (dict.ast && dict.ast.length > 0) {
-                        const astTranslator = new AstTranslator(i18n.settings);
+                        const astTranslator = i18n.coreManager.getAstTranslator(plugin.id);
                         const ast = astTranslator.loadCode(fileString);
                         if (ast) {
                             fileString = astTranslator.translate(ast, dict.ast);
@@ -252,12 +254,12 @@ export const PluginItem: React.FC<PluginItemProps> = React.memo(({ plugin, i18n,
                     }
 
                     if (dict.regex && dict.regex.length > 0) {
-                        const regexTranslator = new RegexTranslator(i18n.settings);
+                        const regexTranslator = i18n.coreManager.getRegexTranslator(plugin.id);
                         fileString = regexTranslator.translate(fileString, dict.regex);
                     }
 
                     if (targetFilePath.endsWith('.js')) {
-                        const checkTranslator = new AstTranslator(i18n.settings);
+                        const checkTranslator = i18n.coreManager.getAstTranslator(plugin.id);
                         if (!checkTranslator.loadCode(fileString)) {
                             throw new Error(t('Manager.Plugins.Errors.SyntaxError', { file }));
                         }

@@ -163,7 +163,6 @@ const RegexSidebar: React.FC<Props> = ({
                             onIncrementalExtract={onIncrementalExtract || (() => { })}
                             onClearUntranslated={useRegexStore.use.deleteUntranslatedRegexItems()}
                             onOpenFile={onOpenFile}
-                            isApplied={isApplied}
                             clearUntranslatedHiddenCount={clearUntranslatedHiddenCount}
                         />
                     )}

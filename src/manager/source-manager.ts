@@ -4,7 +4,7 @@
  */
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import { TranslationSourceMeta, TranslationSource, EMPTY_META, PluginTranslationV1, IgnoredKeysStore, EMPTY_IGNORED_KEYS } from '../types';
+import { TranslationSourceMeta, TranslationSource, EMPTY_META, PluginTranslationV1, IgnoredKeysStore, EMPTY_IGNORED_KEYS, ExtractRulesStore, EMPTY_EXTRACT_RULES, PluginExtractRules } from '../types';
 import { calculateChecksum } from '../utils/translator/translation';
 import { nanoid } from 'nanoid';
 import { useGlobalStoreInstance } from '~/utils';
@@ -17,8 +17,10 @@ export class SourceManager {
     private metaPath: string;           // meta.json路径
     private checkpointPath: string;     // backup-checkpoint.json路径
     private ignoredKeysPath: string;    // ignored-keys.json路径 (人工标记，生命周期独立于翻译源)
+    private extractRulesPath: string;   // extract-rules.json路径 (插件专属提取规则，同 ignored-keys 模式)
     private meta: TranslationSourceMeta;
     private ignoredKeys: IgnoredKeysStore;
+    private extractRules: ExtractRulesStore;
 
     constructor(i18nPluginDir: string) {
         this.basePath = i18nPluginDir;
@@ -26,8 +28,10 @@ export class SourceManager {
         this.metaPath = path.join(i18nPluginDir, 'metadata.json');
         this.checkpointPath = path.join(i18nPluginDir, 'backup-checkpoint.json');
         this.ignoredKeysPath = path.join(i18nPluginDir, 'ignored-keys.json');
+        this.extractRulesPath = path.join(i18nPluginDir, 'extract-rules.json');
         this.meta = this.loadMeta();
         this.ignoredKeys = this.loadIgnoredKeysStore();
+        this.extractRules = this.loadExtractRulesStore();
     }
 
     // ========== 元数据管理 ========== 
@@ -417,6 +421,70 @@ export class SourceManager {
             this.ignoredKeys = { version: 1, plugins };
         }
         this.saveIgnoredKeysStore();
+    }
+
+    // ========== 插件专属提取规则持久化 (extract-rules.json) ==========
+
+    /**
+     * 加载提取规则存储。与 ignored-keys 同构：规则独立于翻译源持久化，
+     * 翻译源删除重提后规则仍然生效；规则删除后已提取条目靠 merge 语义保留。
+     */
+    private loadExtractRulesStore(): ExtractRulesStore {
+        try {
+            if (fs.existsSync(this.extractRulesPath)) {
+                const raw = fs.readJsonSync(this.extractRulesPath);
+                if (raw?.plugins && typeof raw.plugins === 'object') {
+                    return { version: 1, plugins: raw.plugins };
+                }
+            }
+        } catch (error) {
+            console.error('[SourceManager] Failed to load extract rules:', error);
+        }
+        return JSON.parse(JSON.stringify(EMPTY_EXTRACT_RULES));
+    }
+
+    private saveExtractRulesStore(store: ExtractRulesStore): boolean {
+        try {
+            fs.ensureDirSync(this.basePath);
+            fs.writeJsonSync(this.extractRulesPath, store, { spaces: 2 });
+            return true;
+        } catch (error) {
+            console.error('[SourceManager] Failed to save extract rules:', error);
+            return false;
+        }
+    }
+
+    /**
+     * 读取插件专属提取规则；未配置时返回 null (调用方按「无追加规则」处理)。
+     */
+    public getPluginExtractRules(pluginId: string): PluginExtractRules | null {
+        const rules = this.extractRules.plugins[pluginId];
+        if (!rules) return null;
+        // 空规则视为未配置，避免调用方为空对象走合并逻辑
+        const hasAst = rules.ast && Object.values(rules.ast).some(v => Array.isArray(v) && v.length > 0);
+        const hasRegex = rules.regex && Object.values(rules.regex).some(v => Array.isArray(v) && v.length > 0);
+        return (hasAst || hasRegex) ? rules : null;
+    }
+
+    /**
+     * 保存/清空插件专属提取规则。rules 为 null 或空对象时删除该插件的条目。
+     * 仅在同步落盘成功后更新内存快照；失败返回 false，由调用方提示并保留编辑内容。
+     */
+    public savePluginExtractRules(pluginId: string, rules: PluginExtractRules | null): boolean {
+        const plugins = { ...this.extractRules.plugins };
+        const hasContent = rules && (
+            Object.values(rules.ast ?? {}).some(v => Array.isArray(v) && v.length > 0) ||
+            Object.values(rules.regex ?? {}).some(v => Array.isArray(v) && v.length > 0)
+        );
+        if (hasContent) {
+            plugins[pluginId] = rules!;
+        } else {
+            delete plugins[pluginId];
+        }
+        const nextStore: ExtractRulesStore = { version: 1, plugins };
+        if (!this.saveExtractRulesStore(nextStore)) return false;
+        this.extractRules = nextStore;
+        return true;
     }
 
     /**

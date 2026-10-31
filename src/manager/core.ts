@@ -3,6 +3,7 @@ import * as fs from 'fs-extra';
 import { t } from '../locales';
 import I18N from '../main';
 import { activateIMT, deactivateIMT, AstTranslator, RegexTranslator } from '../utils';
+import { buildEffectiveSettings } from '../utils/translator/effective-settings';
 import { MANAGER_VIEW_TYPE } from '../views/manager/manager-view';
 
 export class CoreManager {
@@ -19,8 +20,9 @@ export class CoreManager {
     i18nReviewEl: HTMLElement;
 
     // [管理相关] - 翻译器实例复用
-    private _astTranslator: AstTranslator | null = null;
-    private _regexTranslator: RegexTranslator | null = null;
+    // 按插件 ID 键控：插件专属提取规则 (extract-rules sidecar) 只对该插件生效，
+    // 提取/注入/诊断必须用同一份「全局+插件级合并后的 settings」，口径不一致会出现假翻译。
+    private _translatorCache = new Map<string, { ast: AstTranslator; regex: RegexTranslator }>();
 
     constructor(i18n: I18N) {
         this.i18n = i18n;
@@ -86,31 +88,54 @@ export class CoreManager {
     }
 
     /**
-     * 获取 AST 翻译器实例 (懒加载/复用)
+     * 获取指定插件的「生效提取设置」快照：全局 settings 与该插件专属规则 (extract-rules
+     * sidecar) 的并集。不传 pluginId 时返回全局原对象。
+     * 返回值仅作只读快照使用，禁止写回 settings。
      */
-    public getAstTranslator(): AstTranslator {
-        if (!this._astTranslator) {
-            this._astTranslator = new AstTranslator(this.i18n.settings);
+    public getEffectiveSettings(pluginId?: string) {
+        if (!pluginId) return this.i18n.settings;
+        return buildEffectiveSettings(this.i18n.settings, this.i18n.sourceManager.getPluginExtractRules(pluginId));
+    }
+
+    private getTranslatorPair(pluginId?: string): { ast: AstTranslator; regex: RegexTranslator } {
+        const key = pluginId ?? '';
+        let pair = this._translatorCache.get(key);
+        if (!pair) {
+            const settings = this.getEffectiveSettings(pluginId);
+            pair = {
+                ast: new AstTranslator(settings),
+                regex: new RegexTranslator(settings),
+            };
+            this._translatorCache.set(key, pair);
         }
-        return this._astTranslator;
+        return pair;
     }
 
     /**
-     * 获取 Regex 翻译器实例 (懒加载/复用)
+     * 获取 AST 翻译器实例 (懒加载/复用)。
+     * 传入 pluginId 时使用该插件的生效提取规则 (全局 + 插件专属并集)。
      */
-    public getRegexTranslator(): RegexTranslator {
-        if (!this._regexTranslator) {
-            this._regexTranslator = new RegexTranslator(this.i18n.settings);
-        }
-        return this._regexTranslator;
+    public getAstTranslator(pluginId?: string): AstTranslator {
+        return this.getTranslatorPair(pluginId).ast;
     }
 
     /**
-     * 重置翻译器实例 (当设置变更等情况下调用)
+     * 获取 Regex 翻译器实例 (懒加载/复用)。pluginId 语义同 getAstTranslator。
      */
-    public resetTranslators() {
-        this._astTranslator = null;
-        this._regexTranslator = null;
+    public getRegexTranslator(pluginId?: string): RegexTranslator {
+        return this.getTranslatorPair(pluginId).regex;
+    }
+
+    /**
+     * 重置翻译器实例 (当设置变更等情况下调用)。
+     * 传入 pluginId 仅清除该插件的缓存 (编辑专属规则后调用)；不传则全部清空。
+     */
+    public resetTranslators(pluginId?: string) {
+        if (!pluginId) {
+            this._translatorCache.clear();
+        } else {
+            this._translatorCache.delete(pluginId);
+        }
     }
 
 }

@@ -86,6 +86,57 @@ export const EMPTY_TRANSLATION_MEMORY: TranslationMemoryStore = {
     plugins: {}
 };
 
+/**
+ * 「函数 + 参数位」调用规则：提取插件自封装函数指定实参位上的字符串。
+ * 适用于非框架 create* 系调用 (astFunctions 白名单要求 isFrameworkCreateCall，
+ * 插件私有封装如 tr("...") / _("...") 不在其列)。
+ * args 缺省为 [0]；提取时仍走常规内容过滤 (isValidText)，比选项容器豁免更保守。
+ */
+export interface PluginExtractRuleCall {
+    /** 函数名 (getCallName 口径：Identifier 或 MemberExpression.property) */
+    fn: string;
+    /** 允许提取的实参下标，缺省 [0] */
+    args?: number[];
+}
+
+/**
+ * 单个插件的专属提取规则 (仅追加，与全局白名单取并集)。
+ * 生命周期独立于翻译源 (sidecar: extract-rules.json)——规则删掉后，
+ * 已提取条目靠 merge 的并集语义留在翻译文件里，行为与「临时加全局规则」一致。
+ */
+export interface PluginExtractRules {
+    ast?: {
+        keys?: string[];
+        assignments?: string[];
+        functions?: string[];
+        optionContainers?: string[];
+        callRules?: PluginExtractRuleCall[];
+        nonTranslatableProps?: string[];
+        translatableProps?: string[];
+        rejectRe?: string[];
+        validRe?: string[];
+    };
+    regex?: {
+        patterns?: string[];
+        rejectRe?: string[];
+        validRe?: string[];
+    };
+}
+
+/**
+ * 插件专属提取规则的持久化存储。
+ * 结构与 IgnoredKeysStore 同构：插件 ID → 规则集。
+ */
+export interface ExtractRulesStore {
+    version: 1;
+    plugins: Record<string, PluginExtractRules>;
+}
+
+export const EMPTY_EXTRACT_RULES: ExtractRulesStore = {
+    version: 1,
+    plugins: {}
+};
+
 export interface PluginTranslationV1Metadata {
     // 核心识别信息
     plugin: string;                 // 所属插件ID 

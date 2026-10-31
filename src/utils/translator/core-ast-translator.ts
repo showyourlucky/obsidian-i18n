@@ -5,7 +5,7 @@ import { generate } from "@babel/generator";
 import * as t from '@babel/types';
 // 仅类型依赖：用 import type 保证被完全擦除，
 // 避免运行时把 settings/data 及其 obsidian 依赖链一并拉起，便于单测直接覆盖本类
-import type { PluginTranslationV1Ast, PluginTranslationV1Regex } from '~/types';
+import type { PluginTranslationV1Ast, PluginTranslationV1Regex, PluginExtractRuleCall } from '~/types';
 import type { I18nSettings } from '../../settings/data';
 
 // ====================================================================================================
@@ -116,6 +116,8 @@ export class AstTranslator {
             keys: this.settings?.astKeys || AST_DEFAULT_CONFIG.keys,
             // 选项容器键：设置里未配置时回退内置默认值 (与其它白名单的回退模式一致)
             optionContainers: this.settings?.astOptionContainerKeys || OPTION_CONTAINER_DEFAULT_KEYS,
+            // 调用规则 ({ fn, args })：插件自封装函数的指定实参位提取 (主要来自 per-plugin 追加)
+            callRules: this.settings?.astCallRules || [],
         };
 
         const userReject = (this.settings?.astRejectRe || []).map((re: string) => {
@@ -808,7 +810,7 @@ export class AstTranslator {
             type: string,
             name: string,
             valueNode: t.StringLiteral | t.TemplateLiteral,
-            extra?: { propKey?: string; argIndex?: number; fromOptionContainer?: boolean }
+            extra?: { propKey?: string; argIndex?: number; fromOptionContainer?: boolean; fromCallRule?: boolean }
         ) => void
     ) {
         const isFrameworkCreateCall = (name: string, node: t.CallExpression | t.NewExpression): boolean => {
@@ -918,6 +920,13 @@ export class AstTranslator {
                             });
                         }
                     });
+                    return;
+                }
+                // 4.5 插件级调用规则 ({ fn: "tr", args: [0] })：非框架封装函数的指定实参位。
+                // 与框架分支的差异：不做参数对象深度展开 (用户显式指定了参数位，追求精确)；
+                // 内容过滤不豁免 (走常规 isValidText)，比选项容器更保守
+                if (name) {
+                    this.extractCallRuleArgs(node.arguments, 'CallExpression', name, callback);
                 }
             },
             // 5. 构造函数 (new Notice("..."))
@@ -959,8 +968,53 @@ export class AstTranslator {
                             });
                         }
                     });
+                    return;
+                }
+                // 4.5 插件级调用规则：与 CallExpression 同口径
+                if (name) {
+                    this.extractCallRuleArgs(node.arguments, 'NewExpression', name, callback);
                 }
             }
+        });
+    }
+
+    /**
+     * 4.5 调用规则提取：按 fn 匹配 astCallRules，仅提取 args 指定实参位上的字符串 (含三元分支)。
+     * args 缺省为 [0]；多条规则命中同一函数时各自生效。
+     * 不豁免内容过滤——调用规则多用于插件私有文案函数，常规 isValidText 已够用；
+     * 若确需放宽，用户可在内容过滤正则里自行补充 VALID 特征。
+     */
+    private extractCallRuleArgs(
+        args: readonly any[] | undefined,
+        type: 'CallExpression' | 'NewExpression',
+        name: string,
+        callback: (
+            type: string,
+            name: string,
+            valueNode: t.StringLiteral | t.TemplateLiteral,
+            extra?: { propKey?: string; argIndex?: number; fromOptionContainer?: boolean; fromCallRule?: boolean }
+        ) => void
+    ): void {
+        if (!args || args.length === 0) return;
+        for (const rule of (this.config.callRules ?? []) as PluginExtractRuleCall[]) {
+            if (!rule?.fn || rule.fn !== name) continue;
+            const indexes = (rule.args && rule.args.length > 0) ? rule.args : [0];
+            for (const index of indexes) {
+                const arg = args[index];
+                if (!arg) continue;
+                this.collectStrNodes(arg).forEach(str => {
+                    callback(type, name, str, { argIndex: index, fromCallRule: true });
+                });
+            }
+        }
+    }
+
+    /** 翻译/诊断侧识别当前实参是否由调用规则声明，供宽松匹配与提取侧保持同口径 */
+    private isCallRuleArg(name: string, index: number): boolean {
+        return (this.config.callRules ?? []).some((rule: PluginExtractRuleCall) => {
+            if (!rule?.fn || rule.fn !== name) return false;
+            const indexes = (rule.args && rule.args.length > 0) ? rule.args : [0];
+            return indexes.includes(index);
         });
     }
 
@@ -983,7 +1037,7 @@ export class AstTranslator {
             safe: boolean,
             structural: boolean,
             logic?: LogicStringInfo | null,
-            extra?: { fromOptionContainer?: boolean }
+            extra?: { fromOptionContainer?: boolean; fromCallRule?: boolean }
         ) => void
     ) {
         /** 上报一个字符串节点，并同步计算其上下文安全性 */
@@ -992,7 +1046,7 @@ export class AstTranslator {
             type: string,
             name: string,
             valueNode: t.StringLiteral | t.TemplateLiteral,
-            extra?: { fromOptionContainer?: boolean }
+            extra?: { fromOptionContainer?: boolean; fromCallRule?: boolean }
         ) => {
             const logic = this.logicStringReason(strPath);
             callback(type, name, valueNode, logic === null, this.isStructuralContext(strPath), logic, extra);
@@ -1042,7 +1096,8 @@ export class AstTranslator {
                 const argPaths = path.get('arguments') as any[];
                 node.arguments.forEach((arg, index) => {
                     const strPaths = this.collectStrPaths(argPaths[index]);
-                    strPaths.forEach(s => report(s.path, 'CallExpression', name, s.node));
+                    const extra = this.isCallRuleArg(name, index) ? { fromCallRule: true } : undefined;
+                    strPaths.forEach(s => report(s.path, 'CallExpression', name, s.node, extra));
                     if (strPaths.length === 0 && t.isArrayExpression(arg)) {
                         // 顶层 children 数组 (如 jsx("div", null, "a", ["b"]))，与提取侧对称
                         const elPaths = (argPaths[index] as any).get('elements') as any[];
@@ -1058,7 +1113,8 @@ export class AstTranslator {
                 const argPaths = path.get('arguments') as any[];
                 node.arguments.forEach((arg, index) => {
                     const strPaths = this.collectStrPaths(argPaths[index]);
-                    strPaths.forEach(s => report(s.path, 'NewExpression', name, s.node));
+                    const extra = this.isCallRuleArg(name, index) ? { fromCallRule: true } : undefined;
+                    strPaths.forEach(s => report(s.path, 'NewExpression', name, s.node, extra));
                     if (strPaths.length === 0 && t.isArrayExpression(arg)) {
                         const elPaths = (argPaths[index] as any).get('elements') as any[];
                         (elPaths || []).forEach(elPath => {
@@ -1243,7 +1299,7 @@ export class AstTranslator {
      * 用于收紧宽松回退：仅当字面量确实落在 UI 文案上下文 (白名单的 变量/赋值/对象键/函数调用)
      * 时才允许按 source 文本兜底替换，避免把内部 action 常量 (如 s('REMOVE',…)) 一并改写。
      */
-    private isWhitelistedContext(type: string, name: string, extra?: { fromOptionContainer?: boolean }): boolean {
+    private isWhitelistedContext(type: string, name: string, extra?: { fromOptionContainer?: boolean; fromCallRule?: boolean }): boolean {
         if (!name) return false;
         if (type === 'VariableDeclarator' || type === 'AssignmentExpression') {
             return this.config.assignments.includes(name);
@@ -1255,6 +1311,8 @@ export class AstTranslator {
             return this.config.keys.includes(name) && !this.isStructuralKey(name);
         }
         if (type === 'CallExpression' || type === 'NewExpression') {
+            // 调用规则提取的条目 (fn 通常是插件私有函数) 同理靠标志放行
+            if (extra?.fromCallRule) return true;
             return this.config.functions.includes(name);
         }
         return false;

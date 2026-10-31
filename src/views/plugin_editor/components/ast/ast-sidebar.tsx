@@ -155,7 +155,6 @@ const AstSidebar = ({
                             onIncrementalExtract={onIncrementalExtract || (() => { })}
                             onClearUntranslated={useRegexStore.use.deleteUntranslatedAstItems()}
                             onOpenFile={onOpenFile}
-                            isApplied={isApplied}
                         />
                     )}
                     <DiagnoseCard

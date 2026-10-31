@@ -86,9 +86,9 @@ export class InjectorManager {
         const pluginDir = path.join(path.normalize(this.i18n.app.vault.adapter.getBasePath()), plugin.dir ?? '');
 
         try {
-            // 1. 获取翻译器
-            const astTranslator = this.i18n.coreManager.getAstTranslator();
-            const regexTranslator = this.i18n.coreManager.getRegexTranslator();
+            // 1. 获取翻译器 (按插件生效规则：全局 + 该插件专属提取规则的并集)
+            const astTranslator = this.i18n.coreManager.getAstTranslator(plugin.id);
+            const regexTranslator = this.i18n.coreManager.getRegexTranslator(plugin.id);
 
             // 2. 读取译文
             const translationPath = this.i18n.sourceManager.getActiveSourcePath(plugin.id);
