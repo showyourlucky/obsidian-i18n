@@ -850,10 +850,17 @@ export class AstTranslator {
 
                 // 3. 常规白名单键
                 if (this.config.keys.includes(name) && !this.isStructuralKey(name)) {
-                    this.collectStrNodes(node.value).forEach(str => {
-                        callback('ObjectProperty', name, str, { propKey: name });
-                    });
-                    return;
+                    const valueNodes = this.collectStrNodes(node.value);
+                    // 收到字符串才拦截返回。description 这类键同时可能出现在两份白名单里：
+                    // 值是字符串时走这里 ({ description: "..." })，值是对象字面量时必须放行到
+                    // 下方 3.5 选项容器分支 ({ description: { part1: "...", ... } })，
+                    // 否则用户在 astOptionContainerKeys 里补充同名容器键永远不生效
+                    if (valueNodes.length > 0) {
+                        valueNodes.forEach(str => {
+                            callback('ObjectProperty', name, str, { propKey: name });
+                        });
+                        return;
+                    }
                 }
 
                 // 3.5 选项容器键：只认对象字面量形态，提取直接子属性的字符串值 (含三元分支)，
