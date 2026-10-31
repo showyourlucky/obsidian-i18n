@@ -15,7 +15,7 @@ import { RegexItem, DiagnoseError } from '../../types';
 import { EDITOR_EVENTS } from '../../events';
 import { IgnoredBadge } from '../common/ignored-badge';
 import { MemoryBadge } from '../common/memory-badge';
-import { HeaderCheckbox, RowCheckbox } from '../common/selection-checkbox';
+import { HeaderCheckbox, RowCheckbox, RowSelectModifiers } from '../common/selection-checkbox';
 
 import {
     ColumnDef,
@@ -30,6 +30,8 @@ export interface Props {
     data: RegexItem[];
     editingId: number | null;
     onEditingIdChange: (id: number | null) => void;
+    /** Shift/Ctrl(⌘)+左键：范围选择 / 追加切换选择。普通左键仍走 onEditingIdChange */
+    onRowSelectWithModifiers?: (id: number, modifiers: RowSelectModifiers) => void;
     // 多选（选中项用于「仅翻译选中」）
     selectedIds?: Set<number>;
     onToggleRowSelect?: (id: number, checked: boolean) => void;
@@ -85,6 +87,8 @@ interface MemoizedRegexRowProps {
     row: any;
     isSelected: boolean;
     dataIndex: number;
+    onRowClick: (id: number) => void;
+    onRowSelectWithModifiers?: (id: number, modifiers: RowSelectModifiers) => void;
     errorType?: 'error' | 'unused' | 'security' | null;
     isChecked: boolean;
     onToggleRowSelect?: (id: number, checked: boolean) => void;
@@ -97,16 +101,40 @@ const errorRowStyles: Record<string, string> = {
 };
 
 const MemoizedRegexRowInner = React.forwardRef<HTMLTableRowElement, MemoizedRegexRowProps>(
-    ({ row, isSelected, dataIndex, errorType, isChecked, onToggleRowSelect }, ref) => {
+    ({ row, isSelected, dataIndex, onRowClick, onRowSelectWithModifiers, errorType, isChecked, onToggleRowSelect }, ref) => {
+        const id = row.original.id;
+
+        const handleClick = useCallback((e: React.MouseEvent) => {
+            // Shift/Ctrl(⌘)+左键走多选，普通左键保持「预览/定位」语义
+            if ((e.shiftKey || e.ctrlKey || e.metaKey) && onRowSelectWithModifiers) {
+                onRowSelectWithModifiers(id, { shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey });
+                return;
+            }
+            onRowClick(id);
+        }, [id, onRowClick, onRowSelectWithModifiers]);
+
+        // 修饰键点击时阻止默认行为：否则 contentEditable 的译文单元格会获得焦点进入编辑态，
+        // 浏览器还可能按 Shift 扩展文本选区。按钮/复选框的默认行为必须保留，否则点不动
+        const handleMouseDown = useCallback((e: React.MouseEvent) => {
+            if (!e.shiftKey && !e.ctrlKey && !e.metaKey) return;
+            const target = e.target as HTMLElement | null;
+            if (target?.closest('button, input, a, [role="checkbox"]')) return;
+            e.preventDefault();
+        }, []);
+
         const errorClass = errorType ? errorRowStyles[errorType] || '' : '';
+        // 编辑态优先，其次多选态：Shift 框选大片行时，仅靠复选框很难看出选中范围
+        const stateClass = isSelected ? 'bg-accent' : isChecked ? 'bg-primary/10' : '';
 
         return (
             <TableRow
                 ref={ref}
                 data-index={dataIndex}
                 id={`regex-row-${row.original.id}`}
-                className={`border-b hover:bg-accent/50 ${isSelected ? 'bg-accent' : ''} ${errorClass}`}
+                className={`cursor-pointer border-b hover:bg-accent/50 ${stateClass} ${errorClass}`}
                 data-state={isSelected ? "selected" : undefined}
+                onClick={handleClick}
+                onMouseDown={handleMouseDown}
             >
                 {row.getVisibleCells().map((cell: any) => (
                     <TableCell
@@ -127,11 +155,13 @@ const MemoizedRegexRow = React.memo(MemoizedRegexRowInner, (prev, next) => {
         && prev.row.original === next.row.original
         && prev.errorType === next.errorType
         && prev.isChecked === next.isChecked
-        && prev.onToggleRowSelect === next.onToggleRowSelect;
+        && prev.onToggleRowSelect === next.onToggleRowSelect
+        && prev.onRowClick === next.onRowClick
+        && prev.onRowSelectWithModifiers === next.onRowSelectWithModifiers;
 });
 
 export const RegexTable = React.forwardRef<HTMLDivElement, Props>(({
-    data, editingId, onEditingIdChange,
+    data, editingId, onEditingIdChange, onRowSelectWithModifiers,
     selectedIds, onToggleRowSelect, isAllSelected, isIndeterminate, onToggleSelectAll
 }, ref) => {
     const { t } = useTranslation();
@@ -344,6 +374,8 @@ export const RegexTable = React.forwardRef<HTMLDivElement, Props>(({
                                     dataIndex={virtualRow.index}
                                     row={row}
                                     isSelected={row.original.id === editingId}
+                                    onRowClick={onEditingIdChange}
+                                    onRowSelectWithModifiers={onRowSelectWithModifiers}
                                     errorType={errorMap.get(row.original.id) || null}
                                     isChecked={selectedIds?.has(row.original.id) || false}
                                     onToggleRowSelect={onToggleRowSelect}

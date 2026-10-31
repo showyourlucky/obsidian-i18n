@@ -25,7 +25,7 @@ import { EDITOR_EVENTS } from '../../events';
 import { IgnoredBadge } from '../common/ignored-badge';
 import { MemoryBadge } from '../common/memory-badge';
 import { ASTTableEmptyState } from './ast-table-empty-state';
-import { HeaderCheckbox, RowCheckbox } from '../common/selection-checkbox';
+import { HeaderCheckbox, RowCheckbox, RowSelectModifiers } from '../common/selection-checkbox';
 import { useRegexStore } from '../../store';
 import { getSourceContext, createSourceContextCache } from '@/src/utils/common/source-context';
 
@@ -33,6 +33,8 @@ interface Props {
     data: AstItem[];
     editingId: number | null;
     onRowClick: (id: number) => void;
+    /** Shift/Ctrl(⌘)+左键：范围选择 / 追加切换选择。普通左键仍走 onRowClick */
+    onRowSelectWithModifiers?: (id: number, modifiers: RowSelectModifiers) => void;
     onDelete: (id: number) => void;
     onReset: (id: number) => void;
     selectedIds?: Set<number>;
@@ -222,6 +224,7 @@ interface MemoizedAstRowProps {
     row: any;
     isSelected: boolean;
     onRowClick: (id: number) => void;
+    onRowSelectWithModifiers?: (id: number, modifiers: RowSelectModifiers) => void;
     getCellClass: (columnId: string) => string;
     dataIndex: number;
     errorType?: 'error' | 'unused' | 'security' | null;
@@ -236,12 +239,30 @@ const errorRowStyles: Record<string, string> = {
 };
 
 const MemoizedAstRowInner = React.forwardRef<HTMLTableRowElement, MemoizedAstRowProps>(
-    ({ row, isSelected, onRowClick, getCellClass, dataIndex, errorType, isChecked, onToggleRowSelect }, ref) => {
-        const handleClick = useCallback(() => {
-            onRowClick(row.original.id);
-        }, [row.original.id, onRowClick]);
+    ({ row, isSelected, onRowClick, onRowSelectWithModifiers, getCellClass, dataIndex, errorType, isChecked, onToggleRowSelect }, ref) => {
+        const id = row.original.id;
+
+        const handleClick = useCallback((e: React.MouseEvent) => {
+            // Shift/Ctrl(⌘)+左键走多选，普通左键保持「预览/定位」语义
+            if ((e.shiftKey || e.ctrlKey || e.metaKey) && onRowSelectWithModifiers) {
+                onRowSelectWithModifiers(id, { shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey });
+                return;
+            }
+            onRowClick(id);
+        }, [id, onRowClick, onRowSelectWithModifiers]);
+
+        // 修饰键点击时阻止默认行为：否则 contentEditable 的译文单元格会获得焦点进入编辑态，
+        // 浏览器还可能按 Shift 扩展文本选区。按钮/复选框的默认行为必须保留，否则点不动
+        const handleMouseDown = useCallback((e: React.MouseEvent) => {
+            if (!e.shiftKey && !e.ctrlKey && !e.metaKey) return;
+            const target = e.target as HTMLElement | null;
+            if (target?.closest('button, input, a, [role="checkbox"]')) return;
+            e.preventDefault();
+        }, []);
 
         const errorClass = errorType ? errorRowStyles[errorType] || '' : '';
+        // 编辑态优先，其次多选态：Shift 框选大片行时，仅靠复选框很难看出选中范围
+        const stateClass = isSelected ? 'bg-accent' : isChecked ? 'bg-primary/10' : '';
 
         return (
             <TableRow
@@ -249,8 +270,9 @@ const MemoizedAstRowInner = React.forwardRef<HTMLTableRowElement, MemoizedAstRow
                 data-index={dataIndex}
                 id={`ast-row-${row.original.id}`}
                 data-state={isSelected ? "selected" : undefined}
-                className={`cursor-pointer hover:bg-accent/50 ${isSelected ? 'bg-accent' : ''} ${errorClass}`}
+                className={`cursor-pointer hover:bg-accent/50 ${stateClass} ${errorClass}`}
                 onClick={handleClick}
+                onMouseDown={handleMouseDown}
             >
                 {row.getVisibleCells().map((cell: any) => (
                     <TableCell
@@ -271,10 +293,11 @@ const MemoizedAstRow = React.memo(MemoizedAstRowInner, (prev, next) => {
         && prev.row.original === next.row.original
         && prev.errorType === next.errorType
         && prev.isChecked === next.isChecked
-        && prev.onToggleRowSelect === next.onToggleRowSelect;
+        && prev.onToggleRowSelect === next.onToggleRowSelect
+        && prev.onRowSelectWithModifiers === next.onRowSelectWithModifiers;
 });
 
-export const ASTTable = React.forwardRef<HTMLDivElement, Props>(({ data, editingId, onRowClick, onDelete, onReset, selectedIds, onToggleRowSelect, isAllSelected, isIndeterminate, onToggleSelectAll, sourceCode, onOpenSource, onNeedSource, isLoadingSource, judging }, ref) => {
+export const ASTTable = React.forwardRef<HTMLDivElement, Props>(({ data, editingId, onRowClick, onRowSelectWithModifiers, onDelete, onReset, selectedIds, onToggleRowSelect, isAllSelected, isIndeterminate, onToggleSelectAll, sourceCode, onOpenSource, onNeedSource, isLoadingSource, judging }, ref) => {
     const { t } = useTranslation();
     const updateAstItem = useRegexStore.use.updateAstItem();
     const updateAstItems = useRegexStore.use.updateAstItems();
@@ -565,6 +588,7 @@ export const ASTTable = React.forwardRef<HTMLDivElement, Props>(({ data, editing
                                     row={row}
                                     isSelected={row.original.id === editingId}
                                     onRowClick={onRowClick}
+                                    onRowSelectWithModifiers={onRowSelectWithModifiers}
                                     getCellClass={getCellClass}
                                     errorType={errorMap.get(row.original.id) || null}
                                     isChecked={selectedIds?.has(row.original.id) || false}

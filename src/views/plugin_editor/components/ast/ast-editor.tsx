@@ -7,6 +7,7 @@ import { sourceCacheKey } from '../../types';
 import { EDITOR_EVENTS } from '../../events';
 import { ASTTable } from './ast-table';
 import { useAstJudge } from './use-ast-judge';
+import { computeRowClickSelection, RowSelectModifiers } from '../common/selection-checkbox';
 
 type FilterType = 'all' | 'translated' | 'untranslated';
 type NameFilter = 'all' | string;
@@ -68,6 +69,9 @@ const AstEditor: React.FC<Props> = () => {
     // 当前编辑项ID
     const [editingId, setEditingId] = useState<number | null>(null);
 
+    // Shift+左键范围选择的锚点（内存态；清空选择/切换文件或筛选时一并失效）
+    const selectAnchorRef = React.useRef<number | null>(null);
+
     const astItemsRef = React.useRef(astItems);
     React.useEffect(() => {
         astItemsRef.current = astItems;
@@ -106,6 +110,7 @@ const AstEditor: React.FC<Props> = () => {
     React.useEffect(() => {
         setEditingId(null);
         setSelectedAstIds([]);
+        selectAnchorRef.current = null;
         setIgnoredFilter('all');
     }, [currentFile, setSelectedAstIds]);
 
@@ -187,6 +192,7 @@ const AstEditor: React.FC<Props> = () => {
     // 切换筛选条件时清空选择（避免选中项与当前过滤结果不一致）
     useEffect(() => {
         setSelectedAstIds([]);
+        selectAnchorRef.current = null;
     }, [deferredFilterType, deferredNameFilter, deferredAiFilter, deferredWordOnly, deferredIgnoredFilter, currentFile, setSelectedAstIds]);
 
     // 当 astItems 变化导致 ID 重排时，清除失效的选择
@@ -195,6 +201,9 @@ const AstEditor: React.FC<Props> = () => {
         const currentIds = new Set(astItems.map(i => i.id));
         const next = selectedAstIds.filter(id => currentIds.has(id));
         if (next.length !== selectedAstIds.length) setSelectedAstIds(next);
+        if (selectAnchorRef.current !== null && !currentIds.has(selectAnchorRef.current)) {
+            selectAnchorRef.current = null;
+        }
     }, [astItems, selectedAstIds, setSelectedAstIds]);
 
     // 广播选中项给预览面板
@@ -218,8 +227,25 @@ const AstEditor: React.FC<Props> = () => {
 
     // 稳定化回调
     const handleRowClick = useCallback((id: number) => {
+        // 译文单元格失焦时也会回调 null（见 TargetCell），不能据此清掉锚点
+        if (typeof id === 'number') selectAnchorRef.current = id;
         setEditingId(id);
     }, []);
+
+    // Shift/Ctrl(⌘) + 左键多选
+    const handleRowSelectWithModifiers = useCallback((id: number, modifiers: RowSelectModifiers) => {
+        // 多选时仍同步「当前项」，右侧预览跟随最后点击的条目
+        setEditingId(id);
+        const { ids, anchorId } = computeRowClickSelection(
+            useRegexStore.getState().selectedAstIds,
+            filteredItems.map(i => i.id),
+            selectAnchorRef.current,
+            id,
+            modifiers,
+        );
+        selectAnchorRef.current = anchorId;
+        setSelectedAstIds(ids);
+    }, [filteredItems, setSelectedAstIds]);
 
     const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
         setSearchQuery(e.target.value);
@@ -247,6 +273,7 @@ const AstEditor: React.FC<Props> = () => {
 
     const handleClearSelection = useCallback(() => {
         setSelectedAstIds([]);
+        selectAnchorRef.current = null;
     }, [setSelectedAstIds]);
 
     // 在源码中查看 (通知主编辑器打开当前文件)
@@ -467,6 +494,7 @@ const AstEditor: React.FC<Props> = () => {
                         data={filteredItems}
                         editingId={editingId}
                         onRowClick={handleRowClick}
+                        onRowSelectWithModifiers={handleRowSelectWithModifiers}
                         onDelete={deleteAstItem}
                         onReset={resetAstItem}
                         selectedIds={selectedIds}

@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { useRegexStore } from '../../store';
 import { EDITOR_EVENTS } from '../../events';
 import { RegexTable } from '../..';
+import { computeRowClickSelection, RowSelectModifiers } from '../common/selection-checkbox';
 
 interface Props {
     // 不再需要 sidebar 相关 props
@@ -32,6 +33,15 @@ const RegexEditor: React.FC<Props> = () => {
     }, []);
 
     const [editingId, setEditingId] = React.useState<number | null>(null);
+
+    // Shift+左键范围选择的锚点（内存态；清空选择/切换文件或筛选时一并失效）
+    const selectAnchorRef = React.useRef<number | null>(null);
+
+    // 译文单元格失焦时也会回调 null（见 TargetCell），不能据此清掉锚点
+    const handleEditingIdChange = useCallback((id: number | null) => {
+        if (id !== null) selectAnchorRef.current = id;
+        setEditingId(id);
+    }, []);
 
     // 获取数据
     const regexItems = useRegexStore.use.regexItems();
@@ -71,11 +81,13 @@ const RegexEditor: React.FC<Props> = () => {
         setIgnoredFilter('all');
         setSearchQuery('');
         setSelectedRegexIds([]);
+        selectAnchorRef.current = null;
     }, [currentFile, setSearchQuery, setSelectedRegexIds]);
 
     // 切换筛选条件（含搜索词）或视图过滤时清空选择，避免出现「选中了但看不见」
     React.useEffect(() => {
         setSelectedRegexIds([]);
+        selectAnchorRef.current = null;
     }, [filterType, ignoredFilter, hideAstCoveredRegex, deferredSearchQuery, currentFile, setSelectedRegexIds]);
 
     // 条目被删除/重新提取导致 id 重排时，清掉已失效的选择
@@ -84,6 +96,9 @@ const RegexEditor: React.FC<Props> = () => {
         const currentIds = new Set(regexItems.map(i => i.id));
         const next = selectedRegexIds.filter(id => currentIds.has(id));
         if (next.length !== selectedRegexIds.length) setSelectedRegexIds(next);
+        if (selectAnchorRef.current !== null && !currentIds.has(selectAnchorRef.current)) {
+            selectAnchorRef.current = null;
+        }
     }, [regexItems, selectedRegexIds, setSelectedRegexIds]);
 
     React.useEffect(() => {
@@ -94,12 +109,12 @@ const RegexEditor: React.FC<Props> = () => {
                     setFilterType('all');
                     setSearchQuery(item.source);
                 }
-                setEditingId(e.detail.id);
+                handleEditingIdChange(e.detail.id);
             }
         };
         window.addEventListener(EDITOR_EVENTS.JumpError, handleJump as EventListener);
         return () => window.removeEventListener(EDITOR_EVENTS.JumpError, handleJump as EventListener);
-    }, [setSearchQuery]);
+    }, [setSearchQuery, handleEditingIdChange]);
 
     // 已人工标记为「不需要翻译」的条目数（用于筛选开关上的计数）
     const ignoredCount = useMemo(() => {
@@ -152,6 +167,22 @@ const RegexEditor: React.FC<Props> = () => {
 
     const handleToggleSelectAll = useCallback((checked: boolean) => {
         setSelectedRegexIds(checked ? filteredItems.map(i => i.id) : []);
+        selectAnchorRef.current = null;
+    }, [filteredItems, setSelectedRegexIds]);
+
+    // Shift/Ctrl(⌘) + 左键多选
+    const handleRowSelectWithModifiers = useCallback((id: number, modifiers: RowSelectModifiers) => {
+        // 多选时仍同步「当前项」，右侧预览跟随最后点击的条目
+        setEditingId(id);
+        const { ids, anchorId } = computeRowClickSelection(
+            useRegexStore.getState().selectedRegexIds,
+            filteredItems.map(i => i.id),
+            selectAnchorRef.current,
+            id,
+            modifiers,
+        );
+        selectAnchorRef.current = anchorId;
+        setSelectedRegexIds(ids);
     }, [filteredItems, setSelectedRegexIds]);
 
     /** 当前过滤结果中被选中的数量，用于表头全选 / 半选态 */
@@ -254,7 +285,8 @@ const RegexEditor: React.FC<Props> = () => {
                         key={currentFile}
                         data={filteredItems}
                         editingId={editingId}
-                        onEditingIdChange={setEditingId}
+                        onEditingIdChange={handleEditingIdChange}
+                        onRowSelectWithModifiers={handleRowSelectWithModifiers}
                         selectedIds={selectedIdSet}
                         onToggleRowSelect={handleToggleRowSelect}
                         isAllSelected={isAllSelected}
