@@ -41,8 +41,10 @@ const AstEditor: React.FC<Props> = () => {
     // 标记项筛选：all=全部 / hide=隐藏待删 / only=只看待删（复核后删除或重置标记）
     const [ignoredFilter, setIgnoredFilter] = useState<'all' | 'hide' | 'only'>('all');
 
-    // 批量选择状态（仅在本地组件维护，不持久化到 store）
-    const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+    // 批量选择状态：存在 store 中，翻译面板据此把范围收敛到选中项（不落盘）
+    const selectedAstIds = useRegexStore.use.selectedAstIds();
+    const setSelectedAstIds = useRegexStore.use.setSelectedAstIds();
+    const selectedIds = useMemo(() => new Set(selectedAstIds), [selectedAstIds]);
 
     // 搜索防抖：使用 useDeferredValue 延迟过滤计算
     const deferredSearchQuery = useDeferredValue(searchQuery);
@@ -103,9 +105,9 @@ const AstEditor: React.FC<Props> = () => {
     }, []);
     React.useEffect(() => {
         setEditingId(null);
-        setSelectedIds(new Set());
+        setSelectedAstIds([]);
         setIgnoredFilter('all');
-    }, [currentFile]);
+    }, [currentFile, setSelectedAstIds]);
 
     React.useEffect(() => {
         const handleJump = (e: CustomEvent<{ type: string, id: number }>) => {
@@ -184,21 +186,16 @@ const AstEditor: React.FC<Props> = () => {
 
     // 切换筛选条件时清空选择（避免选中项与当前过滤结果不一致）
     useEffect(() => {
-        setSelectedIds(new Set());
-    }, [deferredFilterType, deferredNameFilter, deferredAiFilter, deferredWordOnly, deferredIgnoredFilter, currentFile]);
+        setSelectedAstIds([]);
+    }, [deferredFilterType, deferredNameFilter, deferredAiFilter, deferredWordOnly, deferredIgnoredFilter, currentFile, setSelectedAstIds]);
 
     // 当 astItems 变化导致 ID 重排时，清除失效的选择
     useEffect(() => {
-        if (selectedIds.size === 0) return;
+        if (selectedAstIds.length === 0) return;
         const currentIds = new Set(astItems.map(i => i.id));
-        setSelectedIds(prev => {
-            const next = new Set<number>();
-            for (const id of prev) {
-                if (currentIds.has(id)) next.add(id);
-            }
-            return next.size === prev.size ? prev : next;
-        });
-    }, [astItems]);
+        const next = selectedAstIds.filter(id => currentIds.has(id));
+        if (next.length !== selectedAstIds.length) setSelectedAstIds(next);
+    }, [astItems, selectedAstIds, setSelectedAstIds]);
 
     // 广播选中项给预览面板
     React.useEffect(() => {
@@ -238,25 +235,19 @@ const AstEditor: React.FC<Props> = () => {
 
     // 批量选择回调
     const handleToggleRowSelect = useCallback((id: number, checked: boolean) => {
-        setSelectedIds(prev => {
-            const next = new Set(prev);
-            if (checked) next.add(id);
-            else next.delete(id);
-            return next;
-        });
-    }, []);
+        const next = new Set(useRegexStore.getState().selectedAstIds);
+        if (checked) next.add(id);
+        else next.delete(id);
+        setSelectedAstIds(Array.from(next));
+    }, [setSelectedAstIds]);
 
     const handleToggleSelectAll = useCallback((checked: boolean) => {
-        if (checked) {
-            setSelectedIds(new Set(filteredItems.map(i => i.id)));
-        } else {
-            setSelectedIds(new Set());
-        }
-    }, [filteredItems]);
+        setSelectedAstIds(checked ? filteredItems.map(i => i.id) : []);
+    }, [filteredItems, setSelectedAstIds]);
 
     const handleClearSelection = useCallback(() => {
-        setSelectedIds(new Set());
-    }, []);
+        setSelectedAstIds([]);
+    }, [setSelectedAstIds]);
 
     // 在源码中查看 (通知主编辑器打开当前文件)
     const handleOpenSource = useCallback(() => {
@@ -271,24 +262,24 @@ const AstEditor: React.FC<Props> = () => {
         if (ids.length === 0) return;
         if (!confirm(t('Editor.Notices.ConfirmBatchDelete', { count: ids.length }))) return;
         deleteAstItemsByIds(ids);
-        setSelectedIds(new Set());
-    }, [selectedIds, deleteAstItemsByIds, t, judgeState.isJudging]);
+        setSelectedAstIds([]);
+    }, [selectedIds, deleteAstItemsByIds, t, judgeState.isJudging, setSelectedAstIds]);
 
     // 批量还原
     const handleBatchReset = useCallback(() => {
         const ids = Array.from(selectedIds);
         if (ids.length === 0) return;
         resetAstItemsByIds(ids);
-        setSelectedIds(new Set());
-    }, [selectedIds, resetAstItemsByIds]);
+        setSelectedAstIds([]);
+    }, [selectedIds, resetAstItemsByIds, setSelectedAstIds]);
 
     // 批量标记/取消「不需要翻译」（人工标记，重跑 AI 判定不会清掉）
     const handleBatchIgnore = useCallback((ignored: boolean) => {
         const ids = Array.from(selectedIds);
         if (ids.length === 0) return;
         updateAstItems(ids.map(id => ({ id, updates: { ignored } })));
-        setSelectedIds(new Set());
-    }, [selectedIds, updateAstItems]);
+        setSelectedAstIds([]);
+    }, [selectedIds, updateAstItems, setSelectedAstIds]);
 
     // AI 判定选中项（仅标注，不改 source/target，不删除）
     const handleJudge = useCallback(() => {

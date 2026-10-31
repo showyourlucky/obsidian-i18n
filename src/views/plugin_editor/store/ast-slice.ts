@@ -5,6 +5,10 @@ import { astDictKey } from './dict-slice';
 export const createAstSlice: StateCreator<RegexStore, [], [], AstSlice> = (set, get) => ({
     astItems: [],
 
+    // 多选状态只存在于内存，切换文件/筛选条件时由 UI 层清空（与正则侧同口径）
+    selectedAstIds: [],
+    setSelectedAstIds: (ids: number[]) => set({ selectedAstIds: ids }),
+
     setAstItems: (items: AstItem[]) => set({ astItems: items }),
 
     addAstItem: (newItem: AstItem) => set((state) => {

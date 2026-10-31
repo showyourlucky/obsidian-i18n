@@ -238,10 +238,7 @@ const RegexLLMCard: React.FC<Props> = ({ controller }) => {
                         <Sparkles className="w-3.5 h-3.5" />
                         {targetItems.length > 0
                             ? (isSelectionMode
-                                ? t('Editor.Actions.BatchTranslateSelected', {
-                                    count: targetItems.length,
-                                    defaultValue: '翻译选中 ({{count}})'
-                                })
+                                ? t('Editor.Actions.BatchTranslateSelected', { count: targetItems.length })
                                 : t('Editor.Actions.BatchTranslate', { count: targetItems.length }))
                             : t('Editor.Hints.NoItems')}
                     </Button>

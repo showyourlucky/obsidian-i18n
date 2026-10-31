@@ -76,6 +76,7 @@ export default {
     },
     Actions: {
         BatchTranslate: "开始批量翻译 ({{count}})",
+        BatchTranslateSelected: "翻译选中 ({{count}})",
         Save: "保存",
         IncrementalExtract: "增量提取",
         IncrementalExtractTip: "仅提取新增翻译项",

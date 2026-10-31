@@ -12,6 +12,7 @@ import { selectPendingItems } from '~/utils/translator/pending-items';
 export const useAstTranslation = () => {
     const astItems = useRegexStore.use.astItems();
     const updateAstItems = useRegexStore.use.updateAstItems();
+    const selectedAstIds = useRegexStore.use.selectedAstIds();
     const i18n = useGlobalStore.use.i18n();
 
     // Local State
@@ -41,11 +42,14 @@ export const useAstTranslation = () => {
     const abortControllerRef = useRef<AbortController | null>(null);
 
     // Computed State
-    // 口径统一在 selectPendingItems：人工标记「不需要翻译」的条目永远不参与批量翻译
-    const targetItems = useMemo(
-        () => selectPendingItems(astItems, { overwrite }),
-        [astItems, overwrite]
-    );
+    // 口径统一在 selectPendingItems：人工标记「不需要翻译」的条目永远不参与批量翻译。
+    // 表格有选中项时只翻选中的；未选中时翻全部待翻译条目（与正则侧一致）。
+    const selectedIdSet = useMemo(() => new Set(selectedAstIds), [selectedAstIds]);
+    const targetItems = useMemo(() => {
+        const pending = selectPendingItems(astItems, { overwrite });
+        if (selectedIdSet.size === 0) return pending;
+        return pending.filter(item => selectedIdSet.has(item.id));
+    }, [astItems, overwrite, selectedIdSet]);
 
     // Sync from Global Settings
     useEffect(() => {

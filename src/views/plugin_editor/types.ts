@@ -61,6 +61,13 @@ export interface AstSlice {
     /** AST项列表 */
     astItems: AstItem[];
 
+    /**
+     * AST 表格的多选：参与「仅翻译选中」的条目 id 集合。
+     * 仅存于内存；为空表示未选中，翻译范围回到「全部待翻译条目」。
+     */
+    selectedAstIds: number[];
+    setSelectedAstIds: (ids: number[]) => void;
+
     // ========== 操作 ==========
     /** 初始化AST项列表 */
     setAstItems: (items: AstItem[]) => void;

@@ -5,6 +5,7 @@ import { TemplateCard } from '../common/template-card';
 import { Languages, Sparkles, Layers, Palette, Square, Clock, Coins, Hash } from 'lucide-react';
 
 import { useAstTranslation } from './use-ast-translation';
+import { useRegexStore } from '../../store';
 import { useTranslation } from 'react-i18next';
 
 interface Props {
@@ -14,6 +15,8 @@ interface Props {
 const AstLLMCard: React.FC<Props> = ({ controller }) => {
     const { t } = useTranslation();
     const { state, actions } = controller;
+    // 表格有勾选项时，翻译范围收敛为选中项，按钮文案跟着变，避免误以为在翻全部
+    const isSelectionMode = useRegexStore.use.selectedAstIds().length > 0;
     const {
         language,
         style,
@@ -235,7 +238,11 @@ const AstLLMCard: React.FC<Props> = ({ controller }) => {
                         className="text-xs h-8 gap-1.5 font-medium w-full transition-all duration-200 hover:opacity-90 active:scale-[0.98]"
                     >
                         <Sparkles className="w-3.5 h-3.5" />
-                        {targetItems.length > 0 ? t('Editor.Actions.BatchTranslate', { count: targetItems.length }) : t('Editor.Hints.NoItems')}
+                        {targetItems.length > 0
+                            ? (isSelectionMode
+                                ? t('Editor.Actions.BatchTranslateSelected', { count: targetItems.length })
+                                : t('Editor.Actions.BatchTranslate', { count: targetItems.length }))
+                            : t('Editor.Hints.NoItems')}
                     </Button>
                 )}
             </div>
