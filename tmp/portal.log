@@ -1,0 +1,36 @@
+Invalid hook call. Hooks can only be called inside of the body of a function component. This could happen for one of the following reasons:
+1. You might have mismatching versions of React and the renderer (such as React DOM)
+2. You might be breaking the Rules of Hooks
+3. You might have more than one copy of React in the same app
+See https://react.dev/link/invalid-hook-call for tips about how to debug and fix this problem.
+✔ 共享弹层容器创建后挂到 body，移除及重载不缓存旧节点 (152.6803ms)
+✔ SelectContent 使用共享容器并保留 Radix 直接子组件 (468.0984ms)
+✔ TooltipContent 使用共享容器并保留 Radix 直接子组件 (63.4608ms)
+✔ HoverCardContent 使用共享容器并保留 Radix 直接子组件 (27.5879ms)
+✔ DropdownMenuContent 使用共享容器并保留 Radix 直接子组件 (70.4567ms)
+✖ DialogContent 使用共享容器并保留 Radix 直接子组件 (66.2905ms)
+✔ DialogPortal 保留显式元素及 null 容器 (16.8468ms)
+✔ DropdownMenuPortal 保留显式元素及 null 容器 (29.2066ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 7
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1186.5894
+
+✖ failing tests:
+
+test at tests\portal.test.mjs:110:5
+✖ DialogContent 使用共享容器并保留 Radix 直接子组件 (66.2905ms)
+  TypeError [Error]: Cannot read properties of null (reading 'useRef')
+      at process.env.NODE_ENV.exports.useRef (F:\nodejs\obsidian-i18n\node_modules\react\cjs\react.development.js:1260:33)
+      at Object.DialogContent (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/portal.test.mjs:30:9), <anonymous>:93:28)
+      at TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/portal.test.mjs:116:43)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)

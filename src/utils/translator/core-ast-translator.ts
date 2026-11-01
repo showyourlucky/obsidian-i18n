@@ -1418,35 +1418,66 @@ export class AstTranslator {
 
     private extractSource(node: t.StringLiteral | t.TemplateLiteral): string {
         if (t.isStringLiteral(node)) return node.value;
-        if (t.isTemplateLiteral(node) && node.quasis.length === 1) {
-            return node.quasis[0].value.raw;
+        if (t.isTemplateLiteral(node)) {
+            // 无插值的纯模板
+            if (node.quasis.length === 1) return node.quasis[0].value.raw;
+            // 含 ${} 插值的模板：把各插值表达式还原成源码文本，
+            // 例如 `Auto ${s} interval (minutes)`，作为可翻译的原文
+            let out = '';
+            node.quasis.forEach((quasi, i) => {
+                out += quasi.value.raw;
+                if (i < node.expressions.length) {
+                    out += '${' + generate(node.expressions[i] as t.Node, { minified: true }).code + '}';
+                }
+            });
+            // 只有整体像自然语言句子时才收，否则会连日志、错误消息、数据格式串一起捞进表格
+            return this.isTranslatableTemplate(out) ? out : '';
         }
         return "";
     }
 
     /**
-     * 用译文替换字面量节点的内容。
-     *
-     * 关键约束：**不改变节点的字面量形态**。
-     * 译文里的 ${xxx} 只是普通文本，不能因为「长得像插值」就把 StringLiteral
-     * 升级成 TemplateLiteral —— 那会让原本的文案片段变成真实变量引用。
-     * 典型事故：插件里 "..._resouces/${date}/${notename}" 是给用户看的模板占位符，
-     * 被改成 `..._resouces/${date}/${notename}` 后打开设置页直接
-     * ReferenceError: date is not defined。
-     *
-     * 因此仅当原节点本来就是 TemplateLiteral 时才重建插值结构；
-     * StringLiteral 一律按纯文本写入（${ 无需转义，普通字符串里本就是字面量）。
+     * 判断含插值的模板是否值得翻译
+     * 去掉 ${...} 之后仍然是通顺的自然语言 → 视为界面文案；
+     * 否则视为日志、错误消息或数据格式串，丢弃。
      */
+    private isTranslatableTemplate(text: string): boolean {
+        const stripped = text.replace(/\$\{[^}]*\}/g, ' ');
+        if (/[{}<>=;|&\\]|=>|\bthis\.|\bvar\b|\bfunction\b|0x|\/\//.test(stripped)) return false;
+        const words = stripped.trim().split(/\s+/).filter(Boolean);
+        if (words.length < 2) return false;
+        const natural = words.filter(w => /^[A-Za-z][a-z'-]*[.,:?!]?$/.test(w) || /^[A-Z]/.test(w)).length;
+        return natural / words.length > 0.6;
+    }
+
+    /** 取出模板字符串里各插值表达式的源码文本，用于替换前后的一致性校验 */
+    private templateExpressions(node: t.StringLiteral | t.TemplateLiteral): string[] {
+        if (!t.isTemplateLiteral(node)) return [];
+        return node.expressions.map(e =>
+            generate(e as t.Node, { minified: true }).code.replace(/\s+/g, '')
+        );
+    }
+
     private replaceSource(node: t.StringLiteral | t.TemplateLiteral, target: string) {
         if (t.isStringLiteral(node)) {
             node.value = target;
             return;
         }
-
-        // 模板字面量：只有「原本就没有插值」的才可能被匹配到 (extractSource 只认单 quasi)，
-        // 因此译文里的 ${ 同样是纯文本，必须按 raw 转义，不能凭空造出变量引用
-        node.quasis = [t.templateElement({ raw: toTemplateRaw(target), cooked: target }, true)];
-        node.expressions = [];
+        try {
+            const safeTarget = target.replace(/`/g, '\\`');
+            const ast = parseExpression('`' + safeTarget + '`');
+            if (t.isTemplateLiteral(ast)) {
+                // 安全校验：译文里的插值表达式必须与原文逐一对应。
+                // 翻译时若改动、增删了 ${...}，直接放弃替换（保留英文），
+                // 避免生成引用不存在变量的代码。
+                const srcExpr = this.templateExpressions(node);
+                const tgtExpr = ast.expressions.map(e =>
+                    generate(e as t.Node, { minified: true }).code.replace(/\s+/g, '')
+                );
+                if (tgtExpr.length !== srcExpr.length || tgtExpr.some((e, i) => e !== srcExpr[i])) return;
+                Object.assign(node, { type: 'TemplateLiteral', quasis: ast.quasis, expressions: ast.expressions });
+            }
+        } catch (e) { /* ignore */ }
     }
 
     private getAssignName(node: t.Node): string | null {

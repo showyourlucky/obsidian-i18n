@@ -1,0 +1,486 @@
+[i18n] Injected but plugin is disabled: target-plugin
+[i18n] Injected but plugin is disabled: target-plugin
+✔ 智能更新基于新版源码汉化，恢复仍得到新版源码 (102.9427ms)
+[i18n] Injected but plugin is disabled: target-plugin
+✔ 先校准状态也不会把未标记版本的旧快照当作新版源码 (38.1105ms)
+[i18n] Restore failed for [target-plugin]: Error: 备份来源版本与当前版本不一致，已停止使用旧备份
+    at BackupManager.checkVersion (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:148:13)
+    at async BackupManager.restoreSnapshot (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:280:7)
+    at async BackupManager.withResourceLock (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:78:14)
+    at async TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:166:18)
+    at async Test.run (node:internal/test_runner/test:1409:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+✔ 恢复旧版本快照时拒绝覆盖已安装的新版插件 (23.5068ms)
+[i18n] Injected but plugin is disabled: target-plugin
+✔ 跨版本重建快照后恢复不会复活新版已移除的文件 (54.4911ms)
+[i18n] Injected but plugin is disabled: target-plugin
+[i18n] Injected but plugin is disabled: target-plugin
+[i18n] Failed to inject translation to target-plugin: Error: Manager.Common.Errors.BackupFailed
+    at InjectorManager.applyPluginWithBackup (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:123:15)
+✔ 同版本重复应用始终从原文翻译，恢复后原文不变 (109.7507ms)
+✔ 备份返回失败时注入器不写目标、不翻译也不更新状态 (23.0487ms)
+[i18n] Failed to inject translation to target-plugin: Error: injected second backup read failure
+    at Object.getBackupContent (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:225:45)
+    at InjectorManager.applyPluginWithBackup (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:130:39)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async BackupManager.withResourceLock (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:78:14)
+    at async TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:229:18)
+    at async Test.run (node:internal/test_runner/test:1409:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+✔ 自动应用准备第二个文件失败时不写入任何目标文件 (68.0668ms)
+[i18n] Backup failed for [target-plugin]: Error: 备份目录被其他文件占用，已停止应用
+    at BackupManager.createSnapshot (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:202:15)
+    at async BackupManager.withResourceLock (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:78:14)
+    at async TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:242:18)
+    at async Test.run (node:internal/test_runner/test:1409:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+✔ 备份目录位置是普通文件时不能将其当作有效快照 (16.3264ms)
+[i18n] Backup failed for [target-plugin]: [Error: EISDIR: illegal operation on a directory, read 'C:\Users\lucky\AppData\Local\Temp\i18n-backup-test-klKdxg\.obsidian\plugins\target-plugin\unreadable.js'] {
+  errno: -4068,
+  code: 'EISDIR',
+  syscall: 'read',
+  path: 'C:\\Users\\lucky\\AppData\\Local\\Temp\\i18n-backup-test-klKdxg\\.obsidian\\plugins\\target-plugin\\unreadable.js'
+}
+✔ 新版快照创建中途失败时保留原有完整快照 (60.8773ms)
+[i18n] Backup failed for [target-plugin]: Error: injected metadata write failure
+    at fs.writeJson (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:263:68)
+    at BackupManager.createSnapshot (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:228:16)
+    at async BackupManager.withResourceLock (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:78:14)
+    at async TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:267:22)
+    at async Test.run (node:internal/test_runner/test:1409:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+✔ 快照元数据写入失败时保留旧快照并清理未完成的临时文件 (37.9182ms)
+✔ 并发创建新版快照时复用首份原文，不把已汉化文件存为原文 (72.0774ms)
+[i18n] Backup failed for [target-plugin]: Error: injected snapshot rename failure
+    at fs.rename (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:328:19)
+    at BackupManager.createSnapshot (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:236:18)
+    at async BackupManager.withResourceLock (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:78:14)
+    at async TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:333:22)
+    at async Test.run (node:internal/test_runner/test:1409:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+✔ 临时快照切换失败时旧快照与版本信息复位 (37.9672ms)
+✔ 旧备份版本标记写入失败时不校准内存或磁盘状态 (18.9358ms)
+✔ 旧单文件 .js.gz 备份迁移时保留同版本原文 (22.1527ms)
+✔ 旧单文件 .js 备份迁移时保留同版本原文 (26.2665ms)
+[i18n] Restore failed for [target-plugin]: Error: 备份来源版本与当前版本不一致，已停止使用旧备份
+    at BackupManager.checkVersion (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:148:13)
+    at async BackupManager.restoreSnapshot (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:280:7)
+    at async BackupManager.withResourceLock (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:78:14)
+    at async TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:390:18)
+    at async Test.run (node:internal/test_runner/test:1409:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+✔ 无法判断版本的旧备份拒绝用于恢复且保留备份 (11.9313ms)
+[i18n] Backup failed for [target-plugin]: Error: 无法确认旧备份的来源版本，已停止应用
+    at BackupManager.createSnapshot (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:208:15)
+    at async InjectorManager.applyPluginWithBackup (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:121:24)
+    at async BackupManager.withResourceLock (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:78:14)
+    at async TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:402:18)
+    at async Test.run (node:internal/test_runner/test:1409:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+[i18n] Failed to inject translation to target-plugin: Error: Manager.Common.Errors.BackupFailed
+    at InjectorManager.applyPluginWithBackup (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:123:15)
+    at async BackupManager.withResourceLock (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:78:14)
+    at async TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:402:18)
+    at async Test.run (node:internal/test_runner/test:1409:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+✔ 未应用状态的当前版本不能证明未知旧备份属于当前版本 (13.8588ms)
+[i18n] Restore failed for [target-plugin]: Error: incorrect header check
+    at genericNodeError (node:internal/errors:999:15)
+    at wrappedFn (node:internal/errors:544:14)
+    at Zlib.zlibOnError [as onerror] (node:zlib:210:13) {
+  errno: -3,
+  code: 'Z_DATA_ERROR'
+}
+✔ 多文件快照含损坏 gzip 时不部分恢复且保留所有备份 (20.5075ms)
+[i18n] Restore failed for [target-plugin]: Error: injected legacy cleanup failure
+    at fs.remove (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:435:44)
+    at BackupManager.removeLegacyBackups (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:353:16)
+    at async BackupManager.removeSnapshot (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:341:5)
+    at async BackupManager.restoreSnapshot (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:289:7)
+    at async BackupManager.withResourceLock (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:78:14)
+    at async TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:440:26)
+    at async Test.run (node:internal/test_runner/test:1409:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+[i18n] Restore failed for [target-plugin]: Error: injected legacy cleanup failure
+    at fs.remove (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:435:44)
+    at BackupManager.removeLegacyBackups (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:353:16)
+    at async BackupManager.removeSnapshot (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:341:5)
+    at async BackupManager.restoreSnapshot (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:289:7)
+    at async BackupManager.withResourceLock (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:78:14)
+    at async TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:440:26)
+    at async Test.run (node:internal/test_runner/test:1409:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+✔ 旧格式清理失败时连续恢复仍只使用新版快照并保留版本信息 (26.8189ms)
+[i18n] Health check failed for target-plugin, triggering automatic rollback...
+✔ 重载失败而恢复成功时清除已应用状态并报告回滚 (29.0387ms)
+[i18n] Health check failed for target-plugin, triggering automatic rollback...
+[i18n] Failed to inject translation to target-plugin: Error: Manager.Common.Errors.RestoreFailed
+    at InjectorManager.applyPluginWithBackup (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:166:19)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async BackupManager.withResourceLock (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:78:14)
+    at async TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:471:20)
+    at async Test.run (node:internal/test_runner/test:1409:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+[i18n] Failed to inject translation to test-theme: Error: Manager.Common.Errors.BackupFailed
+    at InjectorManager.applyThemeWithBackup (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:227:15)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+✔ 重载及恢复均失败时不报告回滚成功，保留状态与备份 (29.7705ms)
+✔ 主题备份失败时不写 CSS 也不更新状态 (20.9588ms)
+[i18n] Health check failed for target-plugin, triggering automatic rollback...
+[i18n] Successfully injected and reloaded: target-plugin
+✔ 并发应用等待前一次重载及回滚结束，后一次成功不会被前一次回滚撤销 (51.8919ms)
+[i18n] Successfully injected and reloaded: target-plugin
+✔ 应用准备文件期间排队恢复等待完整操作，随后恢复原文并清理状态 (28.7771ms)
+[i18n] Successfully injected and reloaded: target-plugin
+✔ 应用重载期间排队恢复等待完整操作，随后恢复原文并清理状态 (26.4207ms)
+[i18n] Health check failed for target-plugin, triggering automatic rollback...
+[i18n] Failed to reload restored plugin target-plugin: Error: injected original load failure
+    at f.app.plugins.enablePlugin (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:626:50)
+    at InjectorManager.applyPluginWithBackup (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:170:41)
+    at async BackupManager.withResourceLock (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:78:14)
+    at async TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:628:22)
+    at async Test.run (node:internal/test_runner/test:1409:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+✔ 恢复原版后重载抛错时返回失败，不报告回滚成功且清理已应用状态 (28.229ms)
+[i18n] Health check failed for target-plugin, triggering automatic rollback...
+[i18n] Failed to reload restored plugin target-plugin: Error: Manager.Common.Errors.RestoredReloadFailed
+    at InjectorManager.applyPluginWithBackup (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:172:21)
+    at async BackupManager.withResourceLock (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:33:5), <anonymous>:78:14)
+    at async TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/backup-injector.test.mjs:628:22)
+    at async Test.run (node:internal/test_runner/test:1409:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+✔ 恢复原版后重载静默未启用时返回失败，不报告回滚成功且清理已应用状态 (28.596ms)
+✔ 混合目录与旧 .js.gz 备份迁移时保留 main.js 原文 (329.0343ms)
+✔ 混合目录与旧 .js 备份迁移时保留 main.js 原文 (467.3841ms)
+[i18n] Restore failed for [target-plugin]: Error: 备份文件缺失或清单不一致，已停止使用该备份
+    at BackupManager.readSnapshot (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:172:15)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async BackupManager.restoreSnapshot (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:281:24)
+    at async BackupManager.withResourceLock (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:78:14)
+    at async TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:82:22)
+    at async Test.run (node:internal/test_runner/test:1409:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+[i18n] Backup failed for [target-plugin]: Error: 备份文件缺失或清单不一致，已停止使用该备份
+    at BackupManager.readSnapshot (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:172:15)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async BackupManager.createSnapshot (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:209:75)
+    at async BackupManager.withResourceLock (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:78:14)
+    at async TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:83:22)
+    at async Test.run (node:internal/test_runner/test:1409:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+✔ 新快照缺少 main.js 时拒绝回退到残存旧备份 (74.5494ms)
+[i18n] Restore failed for [target-plugin]: Error: 备份文件缺失或清单不一致，已停止使用该备份
+    at BackupManager.readSnapshot (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:172:15)
+    at async BackupManager.restoreSnapshot (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:281:24)
+    at async BackupManager.withResourceLock (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:78:14)
+    at async TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:82:22)
+    at async Test.run (node:internal/test_runner/test:1409:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+[i18n] Backup failed for [target-plugin]: Error: 备份文件缺失或清单不一致，已停止使用该备份
+    at BackupManager.readSnapshot (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:172:15)
+    at async BackupManager.createSnapshot (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:209:75)
+    at async BackupManager.withResourceLock (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:78:14)
+    at async TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:83:22)
+    at async Test.run (node:internal/test_runner/test:1409:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+✔ 新快照缺少 main.js、styles.css 时拒绝回退到残存旧备份 (38.0222ms)
+[i18n] Restore failed for [target-plugin]: Error: 备份文件清单无效
+    at BackupManager.readMetadata (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:129:13)
+    at async BackupManager.getBackupVersion (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:134:22)
+    at async BackupManager.checkVersion (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:145:27)
+    at async BackupManager.restoreSnapshot (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:280:7)
+    at async BackupManager.withResourceLock (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:78:14)
+    at async TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:100:18)
+    at async Test.run (node:internal/test_runner/test:1409:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+[i18n] Backup failed for [target-plugin]: Error: 备份文件清单无效
+    at BackupManager.readMetadata (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:129:13)
+    at async BackupManager.getBackupVersion (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:134:22)
+    at async BackupManager.createSnapshot (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:206:41)
+    at async BackupManager.withResourceLock (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:78:14)
+    at async TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:101:18)
+    at async Test.run (node:internal/test_runner/test:1409:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+✔ 带空文件清单的新快照拒绝使用残存旧备份或当前译文重建 (15.0106ms)
+[i18n] Backup preserved at C:\Users\lucky\AppData\Local\Temp\i18n-backup-recovery-XwBmam\i18n\backups\.snapshot-zY2W6p.previous: Error: injected snapshot installation and rollback failure
+    at Object.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:116:19)
+    at Object.apply (node:internal/test_runner/mock/mock:805:20)
+    at BackupManager.createSnapshot (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:241:22)
+    at async BackupManager.withResourceLock (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:78:14)
+    at async TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:121:18)
+    at async Test.run (node:internal/test_runner/test:1409:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+[i18n] Backup failed for [target-plugin]: Error: injected snapshot installation and rollback failure
+    at Object.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:116:19)
+    at Object.apply (node:internal/test_runner/mock/mock:805:20)
+    at BackupManager.createSnapshot (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:241:22)
+    at async BackupManager.withResourceLock (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:78:14)
+    at async TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:121:18)
+    at async Test.run (node:internal/test_runner/test:1409:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+[i18n] Backup failed for [target-plugin]: Error: injected snapshot installation and rollback failure
+    at Object.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:116:19)
+    at Object.apply (node:internal/test_runner/mock/mock:805:20)
+    at BackupManager.recoverPendingSnapshot (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:105:16)
+    at async BackupManager.createSnapshot (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:200:7)
+    at async BackupManager.withResourceLock (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:19:5), <anonymous>:78:14)
+    at async TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/backup-recovery.test.mjs:135:18)
+    at async Test.run (node:internal/test_runner/test:1409:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+✔ 新快照置入和旧目录复位均失败时保留可恢复标记并拒绝重新读取译文 (42.8772ms)
+✔ 目录交换期间退出后重建管理器仍可恢复原快照 (25.8484ms)
+✖ 启用后按目标窗口传递当前配置，单窗口错误提供可见提示 (98.1054ms)
+✖ 显式停用先停止发现窗口，并持久化关闭偏好和清理全部会话 (1.3947ms)
+✖ 插件卸载释放运行时并保留用户启用偏好 (1.1283ms)
+✖ 保存启用偏好期间卸载，不在异步保存结束后重新启动 SDK (1.1032ms)
+✔ SDK 清理拒绝时插件卸载仍释放调试界面，并处理异常 (6.2023ms)
+✔ 初始化完成后仍在当前沉浸式设置页才刷新 (4.2741ms)
+✔ 初始化期间切换到其他设置页，迟到结果不覆盖新界面 (0.396ms)
+✔ 初始化期间关闭窗口，迟到结果不覆盖新界面 (0.3015ms)
+✔ 初始化期间重新打开设置页，迟到结果不覆盖新界面 (0.2629ms)
+✔ 启用时发现主窗口、已有工作区窗口和已有独立设置窗口，并保持幂等 (83.4267ms)
+✔ 独立设置窗口不触发工作区事件，打开和重开仍分别得到初始化 (7.7495ms)
+✔ 设置弹窗优先使用实际弹出窗口，缺少getter时从设置元素所属文档发现 (5.0712ms)
+✔ 普通工作区窗口新开和关闭继续处理，关闭事件与pagehide不会重复清理 (8.3546ms)
+✔ 包装设置打开方法保留this、参数、返回值和原始异常 (7.3734ms)
+✔ 停止时恢复设置方法原始descriptor并解绑发现入口，不主动停用SDK (8.9644ms)
+✔ 设置方法原本继承自prototype，停止后恢复继承关系 (4.0813ms)
+✔ 停止保留其他插件后来添加的wrapper，旧wrapper不再发现窗口 (5.4782ms)
+✔ 事件中的异步初始化和清理失败交给onError，不产生未处理拒绝 (4.6614ms)
+✔ 窗口初始化未完成便关闭，及时清理且迟到完成不会重新挂监听 (5.0889ms)
+✔ 停止后重新启动不会令第三方持有的旧设置wrapper复活 (3.9264ms)
+✔ 枚举已有窗口同步失败时解绑发现入口，恢复后可以重新启动 (3.2668ms)
+✔ 主窗口与独立设置窗口各自初始化，重复激活共享就绪结果 (88.9727ms)
+✔ SDK下载完成仍等待实际面板挂载，挂载后才报告初始化成功 (11.4489ms)
+✔ SDK网络失败后可重试，其他窗口保持可用 (6.7143ms)
+✔ SDK非成功状态后可重试，其他窗口保持可用 (5.3621ms)
+✔ SDK执行错误清理本窗口资源并允许重试 (4.1605ms)
+✔ 加载超时后拒绝初始化，迟到的下载结果不会执行SDK (6.4332ms)
+✔ 下载期间停用，响应到达后不会执行SDK或重新挂载界面 (5.8952ms)
+✔ 已执行但尚未挂载时停用，等待旧SDK退出后才允许同窗口重启 (6.3217ms)
+✔ 停用恢复原文并移除SDK握手监听，恢复原有配置和请求桥接 (5.3603ms)
+✔ 停用指定子窗口不影响主窗口，无参停用才清理全部会话 (4.811ms)
+✔ 子窗口点击与拖拽使用其自身Node、文档和视口 (4.7481ms)
+✔ 子窗口GM_fetch保留URLSearchParams、响应数据与不区分大小写的头部契约 (4.7456ms)
+✔ 已有其他SDK实例时拒绝覆盖其配置、接口和监听 (4.023ms)
+✔ 连续停用和启用始终等待最早的SDK原文恢复完成 (5.6212ms)
+✔ SDK已执行未挂载时pagehide立即结束初始化和清理，不等待超时 (4.3162ms)
+✔ 停用恢复SDK覆盖的onerror和原有switch属性descriptor (4.1492ms)
+✔ 停用保留其他插件后来写入的onerror处理器 (4.6045ms)
+✔ 手动应用备份失败时不写源码、不改状态且不启停插件 (18.3429ms)
+✖ 手动应用加载失败且恢复失败时保留状态、不再次启用插件 (33.3122ms)
+✖ 手动应用准备第二个文件失败时不写入任何目标文件 (23.7187ms)
+✖ 手动同版本重复应用从备份原文翻译，恢复得到最初原文 (21.0949ms)
+✖ 手动升级后使用新版源码翻译，恢复保留新版新增功能 (18.4324ms)
+✔ 手动恢复文件后重载返回 false 时报告重载失败，不发送成功通知 (20.5142ms)
+Invalid hook call. Hooks can only be called inside of the body of a function component. This could happen for one of the following reasons:
+1. You might have mismatching versions of React and the renderer (such as React DOM)
+2. You might be breaking the Rules of Hooks
+3. You might have more than one copy of React in the same app
+See https://react.dev/link/invalid-hook-call for tips about how to debug and fix this problem.
+✔ 共享弹层容器创建后挂到 body，移除及重载不缓存旧节点 (74.7429ms)
+✔ SelectContent 使用共享容器并保留 Radix 直接子组件 (210.81ms)
+✔ TooltipContent 使用共享容器并保留 Radix 直接子组件 (26.9848ms)
+✔ HoverCardContent 使用共享容器并保留 Radix 直接子组件 (15.0869ms)
+✔ DropdownMenuContent 使用共享容器并保留 Radix 直接子组件 (34.4045ms)
+✖ DialogContent 使用共享容器并保留 Radix 直接子组件 (22.3651ms)
+✔ DialogPortal 保留显式元素及 null 容器 (7.7636ms)
+✔ DropdownMenuPortal 保留显式元素及 null 容器 (6.9386ms)
+✔ 首次挂载同步亮色主题到宿主和挂载点 (4.5363ms)
+✔ 首次挂载同步暗色主题到宿主和挂载点 (0.5575ms)
+✔ body 主题切换同时更新宿主和 Shadow DOM 挂载点 (1.0413ms)
+✔ 重复挂载复用节点并断开旧主题 observer (0.807ms)
+(node:23356) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+✔ 编译后的普通样式仅影响插件界面和沉浸式翻译控件 (1.4386ms)
+✔ 主题变量不会写入宿主根节点或全局暗色主题 (0.4393ms)
+✔ 隔离后保留视图、Portal、暗色和展开动画需要的样式 (7.988ms)
+✔ Shadow DOM 宿主自身保留暗色变量覆盖 (0.7261ms)
+✔ 默认配置目录读取主题并保留清单、路径和启用状态 (114.2613ms)
+✔ 自定义配置目录读取主题并保留清单、路径和启用状态 (15.5704ms)
+✔ 默认与自定义目录并存时只显示配置目录的主题和清单 (20.9121ms)
+✔ 配置目录不存在时返回空列表而不回退到默认目录 (15.1673ms)
+ℹ tests 98
+ℹ suites 0
+ℹ pass 89
+ℹ fail 9
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 6250.7137
+
+✖ failing tests:
+
+test at tests\immersive-core.test.mjs:51:1
+✖ 启用后按目标窗口传递当前配置，单窗口错误提供可见提示 (98.1054ms)
+  Error: Cannot find module '../utils/translator/effective-settings'
+  Require stack:
+  - F:\nodejs\obsidian-i18n\src\manager\core.ts
+      at Module._resolveFilename (node:internal/modules/cjs/loader:1603:15)
+      at wrapResolveFilename (node:internal/modules/cjs/loader:1145:27)
+      at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1169:10)
+      at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1196:12)
+      at Module._load (node:internal/modules/cjs/loader:1370:5)
+      at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)
+      at Module.require (node:internal/modules/cjs/loader:1713:12)
+      at require (node:internal/modules/helpers:318:16)
+      at requireSource (file:///F:/nodejs/obsidian-i18n/tests/immersive-core.test.mjs:45:16)
+      at eval (eval at fixture (file:///F:/nodejs/obsidian-i18n/tests/immersive-core.test.mjs:47:5), <anonymous>:39:33) {
+    code: 'MODULE_NOT_FOUND',
+    requireStack: [ 'F:\\nodejs\\obsidian-i18n\\src\\manager\\core.ts' ]
+  }
+
+test at tests\immersive-core.test.mjs:70:1
+✖ 显式停用先停止发现窗口，并持久化关闭偏好和清理全部会话 (1.3947ms)
+  Error: Cannot find module '../utils/translator/effective-settings'
+  Require stack:
+  - F:\nodejs\obsidian-i18n\src\manager\core.ts
+      at Module._resolveFilename (node:internal/modules/cjs/loader:1603:15)
+      at wrapResolveFilename (node:internal/modules/cjs/loader:1145:27)
+      at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1169:10)
+      at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1196:12)
+      at Module._load (node:internal/modules/cjs/loader:1370:5)
+      at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)
+      at Module.require (node:internal/modules/cjs/loader:1713:12)
+      at require (node:internal/modules/helpers:318:16)
+      at requireSource (file:///F:/nodejs/obsidian-i18n/tests/immersive-core.test.mjs:45:16)
+      at eval (eval at fixture (file:///F:/nodejs/obsidian-i18n/tests/immersive-core.test.mjs:47:5), <anonymous>:39:33) {
+    code: 'MODULE_NOT_FOUND',
+    requireStack: [ 'F:\\nodejs\\obsidian-i18n\\src\\manager\\core.ts' ]
+  }
+
+test at tests\immersive-core.test.mjs:79:1
+✖ 插件卸载释放运行时并保留用户启用偏好 (1.1283ms)
+  Error: Cannot find module '../utils/translator/effective-settings'
+  Require stack:
+  - F:\nodejs\obsidian-i18n\src\manager\core.ts
+      at Module._resolveFilename (node:internal/modules/cjs/loader:1603:15)
+      at wrapResolveFilename (node:internal/modules/cjs/loader:1145:27)
+      at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1169:10)
+      at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1196:12)
+      at Module._load (node:internal/modules/cjs/loader:1370:5)
+      at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)
+      at Module.require (node:internal/modules/cjs/loader:1713:12)
+      at require (node:internal/modules/helpers:318:16)
+      at requireSource (file:///F:/nodejs/obsidian-i18n/tests/immersive-core.test.mjs:45:16)
+      at eval (eval at fixture (file:///F:/nodejs/obsidian-i18n/tests/immersive-core.test.mjs:47:5), <anonymous>:39:33) {
+    code: 'MODULE_NOT_FOUND',
+    requireStack: [ 'F:\\nodejs\\obsidian-i18n\\src\\manager\\core.ts' ]
+  }
+
+test at tests\immersive-core.test.mjs:91:1
+✖ 保存启用偏好期间卸载，不在异步保存结束后重新启动 SDK (1.1032ms)
+  Error: Cannot find module '../utils/translator/effective-settings'
+  Require stack:
+  - F:\nodejs\obsidian-i18n\src\manager\core.ts
+      at Module._resolveFilename (node:internal/modules/cjs/loader:1603:15)
+      at wrapResolveFilename (node:internal/modules/cjs/loader:1145:27)
+      at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1169:10)
+      at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1196:12)
+      at Module._load (node:internal/modules/cjs/loader:1370:5)
+      at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)
+      at Module.require (node:internal/modules/cjs/loader:1713:12)
+      at require (node:internal/modules/helpers:318:16)
+      at requireSource (file:///F:/nodejs/obsidian-i18n/tests/immersive-core.test.mjs:45:16)
+      at eval (eval at fixture (file:///F:/nodejs/obsidian-i18n/tests/immersive-core.test.mjs:47:5), <anonymous>:39:33) {
+    code: 'MODULE_NOT_FOUND',
+    requireStack: [ 'F:\\nodejs\\obsidian-i18n\\src\\manager\\core.ts' ]
+  }
+
+test at tests\manual-backup.test.mjs:203:1
+✖ 手动应用加载失败且恢复失败时保留状态、不再次启用插件 (33.3122ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'module.exports = { label: "English" };\n'
+  - 'module.exports = { label: "中文" };\n'
+                                ^
+  
+      at TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/manual-backup.test.mjs:209:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'module.exports = { label: "English" };\n',
+    expected: 'module.exports = { label: "中文" };\n',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests\manual-backup.test.mjs:221:1
+✖ 手动应用准备第二个文件失败时不写入任何目标文件 (23.7187ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    [
+      'main.js',
+  -   'second.js'
+    ]
+  
+      at TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/manual-backup.test.mjs:238:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ 'main.js' ],
+    expected: [ 'main.js', 'second.js' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at tests\manual-backup.test.mjs:252:1
+✖ 手动同版本重复应用从备份原文翻译，恢复得到最初原文 (21.0949ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'module.exports = { label: "English" };\n'
+  - 'module.exports = { label: "中文" };\n'
+                                ^
+  
+      at TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/manual-backup.test.mjs:255:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'module.exports = { label: "English" };\n',
+    expected: 'module.exports = { label: "中文" };\n',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests\manual-backup.test.mjs:265:1
+✖ 手动升级后使用新版源码翻译，恢复保留新版新增功能 (18.4324ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'module.exports = { label: "English" };\n'
+  - 'module.exports = { label: "中文" };\n'
+                                ^
+  
+      at TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/manual-backup.test.mjs:268:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'module.exports = { label: "English" };\n',
+    expected: 'module.exports = { label: "中文" };\n',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests\portal.test.mjs:110:5
+✖ DialogContent 使用共享容器并保留 Radix 直接子组件 (22.3651ms)
+  TypeError [Error]: Cannot read properties of null (reading 'useRef')
+      at process.env.NODE_ENV.exports.useRef (F:\nodejs\obsidian-i18n\node_modules\react\cjs\react.development.js:1260:33)
+      at Object.DialogContent (eval at loadSource (file:///F:/nodejs/obsidian-i18n/tests/portal.test.mjs:30:9), <anonymous>:93:28)
+      at TestContext.<anonymous> (file:///F:/nodejs/obsidian-i18n/tests/portal.test.mjs:116:43)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
